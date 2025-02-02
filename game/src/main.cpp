@@ -63,31 +63,39 @@
 // #include <backends/imgui_impl_vulkan.h>
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_error.h>
+#include <SDL3/SDL_events.h>
+#include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_log.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_system.h>
 #include <SDL3/SDL_timer.h>
+#include <SDL3/SDL_video.h>
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 // static constexpr Uint64 NS_PER_FIXED_TICK = 7 * 1e6;  // or ~142 ticks per second
 // static constexpr Uint64 NS_PER_FIXED_TICK = 16 * 1e6; // or ~62.5 ticks per second
-static bool limit_fps = true;
+static bool limit_fps = false;
 static int fps_limit = 240;
 
 #define SDL_WINDOW_WIDTH 1280
 #define SDL_WINDOW_HEIGHT 720
 
-typedef struct
+class SDLException final : public std::runtime_error
 {
-  SDL_Window* window;
-  SDL_Renderer* renderer;
-} AppState;
+public:
+  explicit SDLException(const std::string& message)
+    : std::runtime_error(message + '\n' + SDL_GetError()) {};
+};
 
 struct GameData
 {
@@ -104,31 +112,20 @@ RenderData rend_data;
 
 std::atomic<bool> running(true);
 std::mutex mtx;
-std::condition_variable cv;
-bool render_thread_ready = false;
+std::condition_variable cv_game_t;
+std::condition_variable cv_rend_t;
+std::condition_variable cv_main_t;
 bool game_thread_ready = false;
-
-void
-WaitForRenderThread()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-  cv.wait(lock, [] { return render_thread_ready; });
-  render_thread_ready = false;
-};
-
-void
-SignalRenderThread()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-  render_thread_ready = true; // Signal that the render thread has finished
-  cv.notify_one();            // Notify the game thread
-};
+bool render_thread_ready = false;
+int main_thread_waiting_for = 2;
+static SDL_Window* window;
+static SDL_GPUDevice* device;
 
 void
 WaitForGameThread()
 {
   std::unique_lock<std::mutex> lock(mtx);
-  cv.wait(lock, [] { return game_thread_ready; });
+  cv_game_t.wait(lock, [] { return game_thread_ready; });
   game_thread_ready = false;
 };
 
@@ -137,77 +134,71 @@ SignalGameThread()
 {
   std::unique_lock<std::mutex> lock(mtx);
   game_thread_ready = true;
-  cv.notify_one();
+  cv_game_t.notify_one(); // wake up main()
 };
 
 void
-UpdateGameLogic(Uint64 dt_ns) {
-  // SDL_Delay(16); // work
-
-  // Note: can use std::async for parallelisable tasks...
-  // e.g.
-  // auto player_tasks = std::async(std::launch::async,
-  //   [](){
-  //       input->QueryPlayerInput();
-  //       player->UpdatePlayerCharacter();
-  //   });
-  // player_tasks.wait();
-
-  // Physics...
-  // accu += dt_ns;
-  // while (accu >= NS_PER_FIXED_TICK) {
-  //   accu -= NS_PER_FIXED_TICK;
-  //   // fixedupdate
-  // }
-
-  // particles is standalone AND we can update each particle on its own, so we can combine async with parallel for
-  // auto particles_task = std::async(std::launch::async,
-  //     [](){
-  //         std::for_each(std::execution::par,
-  //             ParticleSystems.begin(),
-  //             ParticleSystems.end(),
-  //             [](Particle* Part){
-  //                  Part->UpdateParticles();
-
-  //                 if(Part->IsDead)
-  //                 {
-  //                     deletion_queue.push(Part);
-  //                 }
-  //             });
-  //     });
-
-  // Update Game Systems...
-  // Poll Input...
-  // Update()
-};
-
-void
-UpdateRenderLogic(SDL_Renderer* renderer, const RenderData& data, Uint64 dt_ns)
+WaitForRenderThread()
 {
-  // SDL_Delay(16); // work
+  std::unique_lock<std::mutex> lock(mtx);
+  cv_rend_t.wait(lock, [] { return render_thread_ready; });
+  render_thread_ready = false;
+};
 
-  // update (NS_DT)
-  SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
-  SDL_RenderClear(renderer);
+void
+SignalRenderThread()
+{
+  std::unique_lock<std::mutex> lock(mtx);
+  render_thread_ready = true;
+  cv_rend_t.notify_one(); // wake up main
+};
 
-  char str[32];
+void
+WaitForMainThread()
+{
+  std::unique_lock<std::mutex> lock(mtx);
+  cv_main_t.wait(lock, [] { return main_thread_waiting_for > 0; });
 
-  // Display: fps
-  const float fps = 1e9 / dt_ns;
-  SDL_snprintf(str, sizeof(str), "%0.2f FPS", fps);
-  SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-  SDL_RenderDebugText(renderer, 0, 0, str);
+  // If you're woken up, main thread no longer waiting for you?
+  main_thread_waiting_for--;
+};
 
-  // Display: fps limit
-  SDL_snprintf(str, sizeof(str), "FPS Limit: %i", fps_limit);
-  SDL_RenderDebugText(renderer, 0, 16, str);
+void
+SignalMainThread()
+{
+  std::lock_guard<std::mutex> lock(mtx);
+  main_thread_waiting_for = 2; // wait for 2 threads to finish now
+  cv_main_t.notify_all();
+};
 
-  // Display: timer
-  SDL_snprintf(str, sizeof(str), "Timer: %0.2f", data.dt);
-  SDL_RenderDebugText(renderer, 0, 32, str);
+void
+UpdateRenderer()
+{
+  SDL_GPUCommandBuffer* cmd_buf = SDL_AcquireGPUCommandBuffer(device);
+  if (cmd_buf == NULL)
+    throw SDLException("Could not aquire GPU command buffer");
 
-  // Done
-  SDL_RenderPresent(renderer);
+  // https://wiki.libsdl.org/SDL3/SDL_WaitAndAcquireGPUSwapchainTexture
+  SDL_GPUTexture* swapchain_texture;
+  SDL_WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, NULL, NULL);
+  if (swapchain_texture == NULL)
+    SDL_Log("Window is minimized...");
+
+  if (swapchain_texture) {
+    SDL_GPUColorTargetInfo colorTargetInfo = {
+      .texture = swapchain_texture,
+      .clear_color = (SDL_FColor){ 0.3f, 0.4f, 0.5f, 1.0f },
+      .load_op = SDL_GPU_LOADOP_CLEAR,
+      .store_op = SDL_GPU_STOREOP_STORE,
+    };
+    std::vector color_targets = { colorTargetInfo };
+
+    SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(cmd_buf, color_targets.data(), color_targets.size(), NULL);
+    SDL_EndGPURenderPass(renderPass);
+  }
+
+  if (!SDL_SubmitGPUCommandBuffer(cmd_buf))
+    throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
 };
 
 // How to avoid copying data between threads?
@@ -235,12 +226,57 @@ CopyGameThreadDataToRenderer()
   rend_data.dt = game_data.dt;
 };
 
-static AppState as;
+const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
+  Uint64 dt_ns = now - past;
+  dt_ns = std::min(dt_ns, Uint64(250 * 1e6)); // avoid spiral
+  past = now;
+  return dt_ns;
+};
 
-SDL_AppResult
-init()
+void
+GameThread()
 {
+  SDL_Log("(GameThread) On main thread: %i", SDL_IsMainThread());
 
+  while (running) {
+    static Uint64 game_past = 0;
+    const Uint64 now = SDL_GetTicksNS();
+    const Uint64 dt_ns = calc_dt_ns(now, game_past);
+
+    // SDL_Log("(GameThread) Update()");
+    const float dt = dt_ns * 1e-9;
+    game_data.counter++;
+    game_data.dt += dt;
+
+    // update done
+    SignalGameThread();
+    // SDL_Log("(GameThread) Done");
+
+    WaitForMainThread(); // wait until the data is copied
+  }
+};
+
+void
+RenderThread()
+{
+  SDL_Log("(RenderThread) On main thread: %i", SDL_IsMainThread());
+
+  while (running) {
+    static Uint64 renderer_past = 0;
+    const Uint64 now = SDL_GetTicksNS();
+    const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
+
+    // SDL_Log("(RenderThread) Update()");
+    UpdateRenderer();
+
+    SignalRenderThread();
+    // SDL_Log("(RenderThread) Done");
+  }
+};
+
+int
+main(int argc, char* argv[])
+{
 #if defined(SDL_PLATFORM_WIN32)
   SDL_Log("Hello, Windows!");
 #elif defined(SDL_PLATFORM_MACOS)
@@ -255,93 +291,136 @@ init()
   SDL_Log("Hello, Unknown platform!");
 #endif
 
-  if (!SDL_SetAppMetadata("Example Snake game", "1.0", "com.blueberrygames.game"))
-    return SDL_APP_FAILURE;
+  SDL_Log("Hello, MainThread!");
+  SDL_Log("(main()) main thread: %i", SDL_IsMainThread());
 
-  SDL_Log("Init SDL3()");
+  if (!SDL_SetAppMetadata("Example Snake game", "1.0", "com.blueberrygames.game"))
+    throw SDLException("Couldn't SDL_SetAppMetadata()");
 
   if (!SDL_Init(SDL_INIT_VIDEO))
-    return SDL_APP_FAILURE;
+    throw SDLException("Failed to SDL_Init(SDL_INIT_VIDEO)");
 
-  if (!SDL_CreateWindowAndRenderer("game", SDL_WINDOW_WIDTH, SDL_WINDOW_HEIGHT, 0, &as.window, &as.renderer))
-    return SDL_APP_FAILURE;
+  auto flags = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_DXIL;
+#if defined(_DEBUG)
+  device = { SDL_CreateGPUDevice(flags, true, nullptr) };
+#else
+  device = { SDL_CreateGPUDevice(flags, false, nullptr) };
+#endif
+  if (device == NULL)
+    throw SDLException("Couldn't create GPU device");
 
-  return SDL_APP_CONTINUE;
-};
+  // Call this only on the MainThread
+  SDL_Log("(RenderThread) -- CreateWindow");
 
-const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
-  Uint64 dt_ns = now - past;
-  dt_ns = std::min(dt_ns, Uint64(250 * 1e6)); // avoid spiral
-  past = now;
-  return dt_ns;
-};
+  SDL_WindowFlags window_flags = 0;
+  flags |= SDL_WINDOW_RESIZABLE;
 
-void
-GameLoop()
-{
-  SDL_Log("Hello from GameLoopThread()");
+  // SDL_CreateWindow: main thread
+  window = SDL_CreateWindow("Game", SDL_WINDOW_WIDTH, SDL_WINDOW_HEIGHT, window_flags);
+  if (window == NULL)
+    throw SDLException("Couldn't SDL_CreateWindow()");
+  SDL_ShowWindow(window);
 
-  // Called from the GameThread, as
-  // SDL_PollEvent may call SDL_PumpEvents can
-  // only be called from the thread that sets the videomode.
-  init();
+  if (!SDL_ClaimWindowForGPUDevice(device, window))
+    throw SDLException("Couldn't claim window for GPU device");
 
-  while (running) {
-    static Uint64 game_past = 0;
-    const Uint64 now = SDL_GetTicksNS();
-    const Uint64 dt_ns = calc_dt_ns(now, game_past);
+  auto device_driver = SDL_GetGPUDeviceDriver(device);
+  SDL_Log("Using GPU device driver: %s", device_driver);
 
-    static SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-      if (e.type == SDL_EVENT_QUIT)
-        running = false;
-    };
+  // Start threads, innit
+  std::thread game_thread(GameThread);
+  std::thread render_thread(RenderThread);
 
-    UpdateGameLogic(dt_ns);
-    const float dt = dt_ns * 1e-9;
-    game_data.counter++;
-    game_data.dt += dt;
-
-    SignalGameThread();
-    WaitForRenderThread();
-  }
-};
-
-int
-main(int argc, char* argv[])
-{
-  std::thread game_thread(GameLoop);
+  // SDL_AddEventWatch(SDL_EventFilter filter, void *userdata)
 
   while (running) {
     static Uint64 past = SDL_GetTicksNS();
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, past);
+    const Uint64 start_s = SDL_GetPerformanceCounter();
 
-    UpdateRenderLogic(as.renderer, rend_data, dt_ns);
+    // SDL_PollEvent: MainThread
+    static SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+      if (e.type == SDL_EVENT_QUIT)
+        running = false;
+    }
+    // TODO: Add events to a thread-safe queue.
 
-    // Note: limiting renderthread fps would also
-    // cause the gamethread to slow down execution which seems weird,
-    // because gamethread waits for renderthread
-    // if (limit_fps) {
-    //   const Uint64 end = SDL_GetTicksNS();
-    //   const Uint64 elapsed_ns = (end - now);
-    //   const Uint64 target_ns = 1e9 / fps_limit;
-    //   const Uint64 delay_ns = SDL_floor(target_ns - elapsed_ns);
-    //   if (delay_ns > 0)
-    //     SDL_DelayNS(delay_ns);
-    // }
+    // SDL_Log("(MainThread) waiting for (GameThread)...");
+    WaitForGameThread();
 
-    WaitForGameThread(); // todo: handle running = false
+    // SDL_Log("(MainThread) waiting for (RenderThread)...");
+    WaitForRenderThread();
 
     // Once both threads finished their work,
     // RenderThread copies the GameThread data in to it's internal structures.
     // The 2 threads are working on their own, and sharing at the end of the frame.
     CopyGameThreadDataToRenderer();
 
-    SignalRenderThread();
+    // SDL_Log("(MainThread) Done");
+    SignalMainThread();
   }
 
   game_thread.join();
+  render_thread.join();
+
+  SDL_ReleaseWindowFromGPUDevice(device, window);
+  SDL_DestroyWindow(window);
+  SDL_DestroyGPUDevice(device);
 
   return 0;
 };
+
+// Note: limiting renderthread fps would also
+// cause the gamethread to slow down execution which seems weird,
+// because gamethread waits for renderthread
+// if (limit_fps) {
+//   const Uint64 end_s = SDL_GetPerformanceCounter();
+//   const Uint64 elapsed_ns = (end_s - start_s) / ((float)SDL_GetPerformanceFrequency() * 1e9f);
+//   const Uint64 target_ns = 1e9 / (float)fps_limit;
+//   const Uint64 delay_ns = SDL_floor(target_ns - elapsed_ns);
+//   if (delay_ns > 0)
+//     SDL_DelayNS(delay_ns);
+// }
+
+// void
+// UpdateGameLogic(Uint64 dt_ns) {
+// SDL_Delay(16); // work
+
+// Note: can use std::async for parallelisable tasks...
+// e.g.
+// auto player_tasks = std::async(std::launch::async,
+//   [](){
+//       input->QueryPlayerInput();
+//       player->UpdatePlayerCharacter();
+//   });
+// player_tasks.wait();
+
+// Physics...
+// accu += dt_ns;
+// while (accu >= NS_PER_FIXED_TICK) {
+//   accu -= NS_PER_FIXED_TICK;
+//   // fixedupdate
+// }
+
+// particles is standalone AND we can update each particle on its own, so we can combine async with parallel for
+// auto particles_task = std::async(std::launch::async,
+//     [](){
+//         std::for_each(std::execution::par,
+//             ParticleSystems.begin(),
+//             ParticleSystems.end(),
+//             [](Particle* Part){
+//                  Part->UpdateParticles();
+
+//                 if(Part->IsDead)
+//                 {
+//                     deletion_queue.push(Part);
+//                 }
+//             });
+//     });
+
+// Update Game Systems...
+// Poll Input...
+// Update()
+// };
