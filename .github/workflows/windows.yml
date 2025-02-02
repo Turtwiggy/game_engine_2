@@ -1,0 +1,66 @@
+name: windows_build
+
+on:
+  push:
+    branches: ["*"]
+
+jobs:
+  build-game:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022]
+        include:
+          - os: windows-2022
+            vcpkg-response-file: vcpkg-x64-windows.txt
+            triplet: x64-windows
+
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/thirdparty/vcpkg
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}/thirdparty/vcpkg/installed
+
+    steps:
+      - uses: lukka/get-cmake@latest
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Restore artifacts, or setup vcpkg for building artifacts
+        uses: lukka/run-vcpkg@v10
+        id: runvcpkg-windows
+        with:
+          vcpkgDirectory: "${{ github.workspace }}/thirdparty/vcpkg"
+          vcpkgJsonGlob: "**/game_survivors_tests/vcpkg.json"
+          runVcpkgInstall: true
+
+      - name: get-windows-compiler
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+
+      - name: configure-windows
+        run: |
+          mkdir build
+          cmake --no-warn-unused-cli -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE -DCMAKE_BUILD_TYPE:STRING=Release -S . -B build -G Ninja
+
+      - name: build-tests
+        run: cmake --build build --config Release --target game_survivors_tests
+
+      - name: run-tests
+        run: ./build/game_survivors_tests/game_survivors_tests.exe | findstr -i "pass"
+
+      - name: build-game
+        run: cmake --build build --config Release --target game_survivors
+
+      - name: copy-game-assets
+        run: |
+          cp -r ${{ github.workspace }}/game_survivors/assets ./build/game_survivors/
+          rm -r ./build/game_survivors/CMakeFiles
+          rm ./build/game_survivors/*.cmake 
+          rm ./build/game_survivors/*.manifest
+
+      - name: release-game
+        uses: actions/upload-artifact@v4
+        with:
+          name: game_survivors-${{ matrix.os }}
+          path: ./build/game_survivors

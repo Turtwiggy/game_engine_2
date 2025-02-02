@@ -1,0 +1,10 @@
+{
+  "name": "default-dependencies",
+  "version-string": "0.0.1",
+  "dependencies": [
+    "gtest",
+    "SDL3",
+    "tracy",
+    "nlohmann-json"
+  ]
+}

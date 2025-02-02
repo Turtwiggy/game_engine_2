@@ -1,0 +1,18 @@
+# Build results
+*.exe
+*.o
+*.log
+build/
+.vs/
+.cache/
+.DS_Store
+!thirdparty/sdk/*.dll
+
+# Configs
+imgui.ini
+
+# Modules
+vcpkg_installed/
+
+# Generated from CMake
+assimp

@@ -1,0 +1,14 @@
+CompileFlags:
+  Add:
+    - -Wno-unused-variable
+    - -Wno-unused-parameter
+    - -Wno-unused-but-set-variable
+    - -Wno-maybe-uninitialized
+  # - -Wno-unused-private-field
+  # - -Wno-deprecated-declarations
+  # - -Wno-microsoft-cast
+  # - -Wno-switch
+  # - -Wno-missing-declarations
+  # - -Wno-string-plus-int
+  # - -Wno-unused-function
+  # - -Wno-assume

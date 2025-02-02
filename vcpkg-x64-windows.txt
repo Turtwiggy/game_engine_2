@@ -1,0 +1,9 @@
+gtest
+STL3
+tracy
+nlohmann-json
+stb
+vulkan
+vulkan-memory-allocator
+--triplet
+x64-windows

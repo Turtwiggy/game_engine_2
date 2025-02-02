@@ -1,0 +1,226 @@
+{
+  "upgrades": [
+
+    // Fast Bullets
+
+    {
+      "name": "Aim Better",
+      "effects": [
+        {
+          "stat": "BULLET_SPEED",
+          "type": "stat_percent_increase",
+          "value": 30
+        },
+        {
+          "stat": "WEAPON_SPREAD",
+          "type": "stat_flat_increase",
+          "value": -15
+        }
+      ]
+    },
+    {
+      "name": "Penetration",
+      "effects": [
+        {
+          "stat": "BULLET_SPEED",
+          "type": "stat_percent_increase",
+          "value": 15
+        },
+        {
+          "stat": "BULLET_PIERCE",
+          "type": "stat_flat_increase",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "Sniper",
+      "effects": [
+        {
+          "stat": "BULLET_SPEED",
+          "type": "stat_percent_increase",
+          "value": 25
+        },
+        {
+          "stat": "BULLET_DAMAGE",
+          "type": "stat_percent_increase",
+          "value": 15
+        }
+      ]
+    },
+    {
+      "name": "Assassin",
+      "desc": "Instantly kill mob below 20% hp",
+      "effects": [
+        {
+          "trait": "ASSASSIN"
+        }
+      ]
+    },
+    
+    //  Bullet Damage
+
+    {
+      "name": "Power Shot",
+      "effects": [
+        {
+          "stat": "BULLET_DAMAGE",
+          "type": "stat_percent_increase",
+          "value": 40
+        },
+        {
+          "stat": "BULLET_KNOCKBACK",
+          "type": "stat_percent_increase",
+          "value": 20
+        }
+      ]
+    },
+    {
+      "name": "Big Shot",
+      "effects": [
+        {
+          "stat": "BULLET_DAMAGE",
+          "type": "stat_percent_increase",
+          "value": 45
+        },
+        {
+          "stat": "BULLET_SIZE",
+          "type": "stat_percent_increase",
+          "value": 40
+        }
+      ]
+    },
+    {
+      "name": "Splinter",
+      "desc": "Enemies explode in to 3 bullets when killed, each hitting for 10% of your bullet damage",
+      "effects": [
+        {
+          "trait": "SPLINTER"
+        }
+      ]
+    },
+    {
+      "name": "Reaper Rounds",
+      "effects": [
+        {
+          "stat": "BULLET_DAMAGE",
+          "type": "stat_percent_increase",
+          "value": 20
+        },
+        {
+          "stat": "BULLET_PIERCE",
+          "type": "stat_flat_increase",
+          "value": 1
+        }
+      ]
+    },
+
+    // Fire Rate Tree
+
+    {
+      "name": "Rapid Fire",
+      "effects": [
+        {
+          "stat": "WEAPON_FIRERATE",
+          "type": "stat_percent_increase",
+          // negative to decrease cooldown
+          "value": -25 
+        },
+        {
+          "stat": "BULLET_KNOCKBACK",
+          "type": "stat_percent_increase",
+          "value": 20
+        }
+      ]
+    },
+    {
+      "name": "Light Bullets",
+      "effects": [
+        {
+          "stat": "WEAPON_FIRERATE",
+          "type": "stat_percent_increase",
+          // negative to decrease cooldown
+          "value": -15 
+        },
+        {
+          "stat": "BULLET_SPEED",
+          "type": "stat_percent_increase",
+          "value": 15
+        }
+      ]
+    },
+    {
+      "name": "Rubber Bullets",
+      "effects": [
+        {
+          "stat": "BULLET_BOUNCE",
+          "type": "stat_flat_increase",
+          "value": 1
+        }
+      ]
+    },
+    // {
+    //   "name": "Siege",
+    //   "desc": "+40% damage when standing still",
+    //   "effects": [
+    //     { "trait": "SIEGE" }
+    //     // could alternatively be something like
+    //     // "condition": "no_move",
+    //     // "stat": "BULLET_DAMAGE",
+    //     // "type": "stat_percent_increase",
+    //     // "value": 40
+    //   ]
+    // },
+
+    // Multi shots tree
+
+    {
+      "name": "Double Shot",
+      "effects": [
+        {
+          "stat": "WEAPON_PROJECTILES",
+          "type": "stat_flat_increase",
+          "value": 1
+        },
+        {
+          "stat": "WEAPON_SPREAD",
+          "type": "stat_flat_increase",
+          "value": 10
+        },
+        {
+          "stat": "BULLET_DAMAGE",
+          "type": "stat_percent_increase",
+          // decrease damage
+          "value": -10 
+        }
+      ]
+    },
+    {
+      "name": "Fan Fire",
+      "desc": "Every 10 shots, shoot a fan of bullets",
+      "effects": [
+        {"trait": "FAN_FIRE"}
+      ]
+    }
+
+    // {
+    //   "name": "Fusilade",
+    //   "desc": "Double projectiles",
+    //   "effects": [
+    //     {
+    //       "stat": "WEAPON_SPREAD",
+    //       "type": "stat_flat_increase",
+    //       "value": 15
+    //     },
+    //     // {
+    //     //   "stat": "WEAPON_PROJECTILE",
+    //     //   "type": "stat_double_active",
+    //     //   "value": 2
+    //     // }
+    //   ]
+    // }
+
+    
+  // end array
+  ] 
+}

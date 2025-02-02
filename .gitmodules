@@ -1,0 +1,12 @@
+[submodule "thirdparty/box2d"]
+	path = thirdparty/box2d
+	url = https://github.com/erincatto/box2d
+[submodule "thirdparty/entt"]
+	path = thirdparty/entt
+	url = https://github.com/skypjack/entt.git
+[submodule "thirdparty/vcpkg"]
+	path = thirdparty/vcpkg
+	url = https://github.com/microsoft/vcpkg.git
+[submodule "thirdparty/imgui"]
+	path = thirdparty/imgui
+	url = https://github.com/ocornut/imgui
