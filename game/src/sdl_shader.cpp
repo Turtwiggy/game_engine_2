@@ -1,9 +1,18 @@
 #include "sdl_shader.hpp"
 
 #include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_init.h>
 #include <SDL3/SDL_log.h>
 
+#include <stdexcept>
+
 namespace game2d {
+
+void
+InitializeAssetLoader()
+{
+  SDL_GetBasePath();
+}
 
 SDL_GPUShader*
 LoadShader(SDL_GPUDevice* device,
@@ -22,7 +31,8 @@ LoadShader(SDL_GPUDevice* device,
   } else if (SDL_strstr(shaderFilename, ".frag")) {
     stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
   } else {
-    SDL_Log("Invalid shader stage!");
+    throw new std::runtime_error("Unrecognized shader stage!");
+    exit(SDL_APP_FAILURE); // crash
     return NULL;
   }
 
@@ -31,7 +41,7 @@ LoadShader(SDL_GPUDevice* device,
   SDL_GPUShaderFormat format = SDL_GPU_SHADERFORMAT_INVALID;
   const char* entrypoint;
 
-  auto assets = "assets/shaders_compiled/";
+  auto assets = "assets/shaders/compiled";
 
   if (backendFormats & SDL_GPU_SHADERFORMAT_SPIRV) {
     SDL_snprintf(fullPath, sizeof(fullPath), "%s%s/SPIRV/%s.spv", BasePath, assets, shaderFilename);
@@ -49,6 +59,8 @@ LoadShader(SDL_GPUDevice* device,
     SDL_Log("%s", "Unrecognized backend shader format!");
     return NULL;
   }
+
+  SDL_Log("Loading shader... %s", fullPath);
 
   size_t codeSize;
   void* code = SDL_LoadFile(fullPath, &codeSize);

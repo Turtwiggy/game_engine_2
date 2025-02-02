@@ -1,7 +1,7 @@
 if(CMAKE_CXX_COMPILER_ID MATCHES GNU)
   message("setting cxx flags for gnu...")
 
-  if(${CMAKE_SYSTEM_NAME} STREQUAL Windows)
+  if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
     message("sledgehammer path changes...")
 
     # set(CMAKE_C_COMPILER "C:/Software/msys64/ucrt64/bin/gcc.exe")
@@ -34,12 +34,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES GNU)
   # but if I add these lines I dont get "relocation truncated to fit" error messages.
   # I normally dont use the LD linker but do use it with the -pg flags, (which lld doesnt support)
   # so probably dont rely on it for a release build.
-  if(${CMAKE_SYSTEM_NAME} STREQUAL Windows)
-    if(LINKER_VERSION MATCHES "GNU ld")
-      message("gnu ld linker detected")
-      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--default-image-base-low")
-    endif()
-  endif()
+  # if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
+  # if(LINKER_VERSION MATCHES "GNU ld")
+  # message("gnu ld linker detected")
+  # set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--default-image-base-low")
+  # endif()
+  # endif()
 
   # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftime-report")
   # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wpedantic"

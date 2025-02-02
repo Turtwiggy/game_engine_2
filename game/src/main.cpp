@@ -1,3 +1,19 @@
+#include "sdl_shader.hpp"
+
+#include <SDL3/SDL.h>
+// #include <vulkan/vulkan.h>
+// #include <vk_mem_alloc.h>
+// #include <vulkan/vk_enum_string_helper.h>
+// #include <backends/imgui_impl_sdl3.h>
+// #include <backends/imgui_impl_vulkan.h>
+
+#include <atomic>
+#include <condition_variable>
+#include <cstddef>
+#include <mutex>
+#include <thread>
+#include <vector>
+
 // clang-format off
 
 // docs: https://vkguide.dev/docs/introduction/vulkan_execution/
@@ -56,32 +72,6 @@
 // PhysicsThread
 // ~100'000 entities chasing you.
 
-// #include <vk_mem_alloc.h>
-// #include <vulkan/vk_enum_string_helper.h>
-// #include <vulkan/vulkan.h>
-// #include <backends/imgui_impl_sdl3.h>
-// #include <backends/imgui_impl_vulkan.h>
-
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_error.h>
-#include <SDL3/SDL_events.h>
-#include <SDL3/SDL_gpu.h>
-#include <SDL3/SDL_init.h>
-#include <SDL3/SDL_log.h>
-#include <SDL3/SDL_main.h>
-#include <SDL3/SDL_scancode.h>
-#include <SDL3/SDL_stdinc.h>
-#include <SDL3/SDL_system.h>
-#include <SDL3/SDL_timer.h>
-#include <SDL3/SDL_video.h>
-
-#include <atomic>
-#include <condition_variable>
-#include <cstddef>
-#include <mutex>
-#include <thread>
-#include <vector>
-
 // static constexpr Uint64 NS_PER_FIXED_TICK = 7 * 1e6;  // or ~142 ticks per second
 // static constexpr Uint64 NS_PER_FIXED_TICK = 16 * 1e6; // or ~62.5 ticks per second
 static bool limit_fps = false;
@@ -101,11 +91,13 @@ struct GameData
 {
   Uint64 counter = 0;
   float dt = 0.0f;
+  std::vector<SDL_Event> evts;
 };
 struct RenderData
 {
-  Uint64 counter = 0;
-  float dt = 0.0f;
+  bool use_wireframe_mode = false;
+  bool use_small_viewport = false;
+  bool use_scissor_viewport = false;
 };
 GameData game_data;
 RenderData rend_data;
@@ -120,6 +112,8 @@ bool render_thread_ready = false;
 int main_thread_waiting_for = 2;
 static SDL_Window* window;
 static SDL_GPUDevice* device;
+static SDL_GPUShader* frag_shader = nullptr;
+static SDL_GPUShader* vert_shader = nullptr;
 
 void
 WaitForGameThread()
@@ -171,61 +165,6 @@ SignalMainThread()
   cv_main_t.notify_all();
 };
 
-void
-UpdateRenderer()
-{
-  SDL_GPUCommandBuffer* cmd_buf = SDL_AcquireGPUCommandBuffer(device);
-  if (cmd_buf == NULL)
-    throw SDLException("Could not aquire GPU command buffer");
-
-  // https://wiki.libsdl.org/SDL3/SDL_WaitAndAcquireGPUSwapchainTexture
-  SDL_GPUTexture* swapchain_texture;
-  SDL_WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, NULL, NULL);
-  if (swapchain_texture == NULL)
-    SDL_Log("Window is minimized...");
-
-  if (swapchain_texture) {
-    SDL_GPUColorTargetInfo colorTargetInfo = {
-      .texture = swapchain_texture,
-      .clear_color = (SDL_FColor){ 0.3f, 0.4f, 0.5f, 1.0f },
-      .load_op = SDL_GPU_LOADOP_CLEAR,
-      .store_op = SDL_GPU_STOREOP_STORE,
-    };
-    std::vector color_targets = { colorTargetInfo };
-
-    SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(cmd_buf, color_targets.data(), color_targets.size(), NULL);
-    SDL_EndGPURenderPass(renderPass);
-  }
-
-  if (!SDL_SubmitGPUCommandBuffer(cmd_buf))
-    throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
-};
-
-// How to avoid copying data between threads?
-//
-// 1. Double buffering. Maintain two copies of the data,
-// one for game thread, one for render thread.
-// The game thread writes to one buffer while the render thread reads from the other.
-// After each frame, the buffers are swapped.
-//
-// 2. Read-Write Locks.
-// A read-write lock allows multiple threads to read data
-// simultaneously but ensures exclusive access for writing.
-// This can be useful if the render thread only needs to read data.
-//
-void
-CopyGameThreadDataToRenderer()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-
-  // auto view = gameRegistry.view<Position>();
-  // if (!view.empty()) {
-  //   renderData.position = pos;
-
-  rend_data.counter = game_data.counter;
-  rend_data.dt = game_data.dt;
-};
-
 const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
   Uint64 dt_ns = now - past;
   dt_ns = std::min(dt_ns, Uint64(250 * 1e6)); // avoid spiral
@@ -243,15 +182,32 @@ GameThread()
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
 
+    const auto& new_evts = game_data.evts;
+    for (const SDL_Event& evt : new_evts) {
+      if (evt.type == SDL_EVENT_KEY_DOWN) {
+        const auto scancode = evt.key.scancode;
+        const auto scancode_name = SDL_GetScancodeName(scancode);
+        const auto down = evt.key.down;
+        const auto repeat = evt.key.repeat;
+        SDL_Log("(GameThread) KeyDown %s %i %i", scancode_name, down, repeat);
+
+        if (scancode == SDL_SCANCODE_KP_PLUS)
+          game_data.counter++;
+        if (scancode == SDL_SCANCODE_KP_MINUS)
+          game_data.counter--;
+      }
+      if (evt.type == SDL_EVENT_KEY_UP) {
+        SDL_Log("(GameThread) KeyUp");
+      }
+    }
+    game_data.evts.clear();
+
     // SDL_Log("(GameThread) Update()");
     const float dt = dt_ns * 1e-9;
-    game_data.counter++;
     game_data.dt += dt;
+    // SDL_Log("Time: %f", game_data.dt);
 
-    // update done
     SignalGameThread();
-    // SDL_Log("(GameThread) Done");
-
     WaitForMainThread(); // wait until the data is copied
   }
 };
@@ -261,16 +217,95 @@ RenderThread()
 {
   SDL_Log("(RenderThread) On main thread: %i", SDL_IsMainThread());
 
+  SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(device, window);
+  SDL_GPUColorTargetDescription hmm{ .format = format };
+  std::vector<SDL_GPUColorTargetDescription> descs{ hmm };
+
+  // Create the pipelines.
+  SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
+    .vertex_shader = vert_shader,
+    .fragment_shader = frag_shader,
+    .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+    .rasterizer_state = { 
+      .fill_mode = SDL_GPU_FILLMODE_FILL 
+    },
+    .target_info = {
+      .color_target_descriptions = descs.data(),
+      .num_color_targets = 1,
+    },
+  };
+
+  auto* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
+  if (fill_pipeline == nullptr) {
+    throw new SDLException("Failed to create Fill GraphicsPipeline()");
+    exit(SDL_APP_FAILURE); // crash
+  }
+
+  pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
+  auto* line_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
+  if (line_pipeline == nullptr) {
+    throw new SDLException("Failed to create Line GraphicsPipeline()");
+    exit(SDL_APP_FAILURE); // crash
+  }
+
+  const SDL_GPUViewport small_viewport = { 160, 120, 320, 240, 0.1f, 1.0f };
+  const SDL_Rect scissor_rect = { 320, 240, 320, 240 };
+
+  // clean up shader resources
+  SDL_Log("Releasing shaders... be free!");
+  SDL_ReleaseGPUShader(device, vert_shader);
+  SDL_ReleaseGPUShader(device, frag_shader);
+
+  SignalRenderThread(); // done init()
   while (running) {
     static Uint64 renderer_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
 
     // SDL_Log("(RenderThread) Update()");
-    UpdateRenderer();
+    {
+      SDL_GPUCommandBuffer* cmd_buf = SDL_AcquireGPUCommandBuffer(device);
+      if (cmd_buf == NULL)
+        throw SDLException("Could not aquire GPU command buffer");
 
-    SignalRenderThread();
-    // SDL_Log("(RenderThread) Done");
+      // https://wiki.libsdl.org/SDL3/SDL_WaitAndAcquireGPUSwapchainTexture
+      SDL_GPUTexture* swapchain_texture;
+      SDL_WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, NULL, NULL);
+      if (swapchain_texture == NULL) {
+        SDL_Log("Window is minimized...");
+        return;
+      }
+
+      if (swapchain_texture) {
+        SDL_GPUColorTargetInfo col_info = {
+          .texture = swapchain_texture,
+          .clear_color = (SDL_FColor){ 0.3f, 0.4f, 0.5f, 1.0f },
+          .load_op = SDL_GPU_LOADOP_CLEAR,
+          .store_op = SDL_GPU_STOREOP_STORE,
+        };
+        std::vector color_targets = { col_info };
+        SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, color_targets.data(), color_targets.size(), NULL);
+
+        // Hello, Triangle
+
+        SDL_BindGPUGraphicsPipeline(render_pass, rend_data.use_wireframe_mode ? line_pipeline : fill_pipeline);
+
+        if (rend_data.use_small_viewport)
+          SDL_SetGPUViewport(render_pass, &small_viewport);
+
+        if (rend_data.use_scissor_viewport)
+          SDL_SetGPUScissor(render_pass, &scissor_rect);
+
+        SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(render_pass);
+      }
+
+      auto submit = SDL_SubmitGPUCommandBuffer(cmd_buf);
+      if (!submit)
+        throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
+    }
+
+    SignalRenderThread(); // done
   }
 };
 
@@ -327,9 +362,24 @@ main(int argc, char* argv[])
   auto device_driver = SDL_GetGPUDeviceDriver(device);
   SDL_Log("Using GPU device driver: %s", device_driver);
 
+  game2d::InitializeAssetLoader();
+
+  vert_shader = game2d::LoadShader(device, "RawTriangle.vert", 0, 0, 0, 0);
+  if (vert_shader == NULL) {
+    SDL_Log("Failed to create vert shader");
+    exit(SDL_APP_FAILURE); // explode
+  };
+
+  frag_shader = game2d::LoadShader(device, "SolidColor.frag", 0, 0, 0, 0);
+  if (frag_shader == NULL) {
+    SDL_Log("Failed to create frag shader");
+    exit(SDL_APP_FAILURE); // explode
+  };
+
   // Start threads, innit
   std::thread game_thread(GameThread);
   std::thread render_thread(RenderThread);
+  WaitForRenderThread(); // wait for it to init
 
   // SDL_AddEventWatch(SDL_EventFilter filter, void *userdata)
 
@@ -341,22 +391,56 @@ main(int argc, char* argv[])
 
     // SDL_PollEvent: MainThread
     static SDL_Event e;
+    static std::vector<SDL_Event> evts;
+    evts.clear();
     while (SDL_PollEvent(&e)) {
       if (e.type == SDL_EVENT_QUIT)
         running = false;
+      evts.push_back(e);
     }
-    // TODO: Add events to a thread-safe queue.
 
     // SDL_Log("(MainThread) waiting for (GameThread)...");
-    WaitForGameThread();
-
     // SDL_Log("(MainThread) waiting for (RenderThread)...");
+    WaitForGameThread();
     WaitForRenderThread();
 
     // Once both threads finished their work,
     // RenderThread copies the GameThread data in to it's internal structures.
     // The 2 threads are working on their own, and sharing at the end of the frame.
-    CopyGameThreadDataToRenderer();
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+
+      // How to avoid copying data between threads?
+      //
+      // 1. Double buffering. Maintain two copies of the data,
+      // one for game thread, one for render thread.
+      // The game thread writes to one buffer while the render thread reads from the other.
+      // After each frame, the buffers are swapped.
+      //
+      // 2. Read-Write Locks.
+      // A read-write lock allows multiple threads to read data
+      // simultaneously but ensures exclusive access for writing.
+      // This can be useful if the render thread only needs to read data.
+      //
+
+      // MainThread to GameThread
+      game_data.evts = evts;
+
+      // GameThread to RenderThread
+      // rend_data.counter = game_data.counter;
+      // rend_data.dt = game_data.dt;
+      // rend_data.use_wireframe_mode =
+      // SDL_Log("(MainThread) counter: %llu", game_data.counter);
+      rend_data.use_wireframe_mode = false;
+      rend_data.use_scissor_viewport = false;
+      rend_data.use_small_viewport = false;
+      if (game_data.counter == 1)
+        rend_data.use_wireframe_mode = true;
+      if (game_data.counter == 2)
+        rend_data.use_scissor_viewport = true;
+      if (game_data.counter == 3)
+        rend_data.use_small_viewport = true;
+    }
 
     // SDL_Log("(MainThread) Done");
     SignalMainThread();
@@ -420,7 +504,4 @@ main(int argc, char* argv[])
 //             });
 //     });
 
-// Update Game Systems...
-// Poll Input...
-// Update()
 // };

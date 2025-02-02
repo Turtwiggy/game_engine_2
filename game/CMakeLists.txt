@@ -39,7 +39,7 @@ file(GLOB_RECURSE SRC_FILES
 )
 
 # Main executable
-if("${CMAKE_BUILD_TYPE}" STREQUAL "Release" AND WIN32)
+if("${CMAKE_BUILD_TYPE}" MATCHES "Release" AND WIN32)
   # "The WIN32 argument instructs the compiler to build a
   # Windows GUI app, which doesn't show a console."
   add_executable(game WIN32 ${SRC_FILES} assets/textures/resource.rc)
@@ -52,7 +52,7 @@ endif()
 link_libs(game)
 
 # Link steam api
-# if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
+# if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
 # # Link steam_api[64].lib
 # set(steam_lib ${CMAKE_SOURCE_DIR}/thirdparty/sdk/redistributable_bin/win64)
 # target_link_libraries(game PRIVATE ${steam_lib}/steam_api64.lib)
@@ -79,22 +79,25 @@ target_include_directories(game PRIVATE
   # ${CMAKE_SOURCE_DIR}/thirdparty/magic_enum
 )
 
+set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")
+
 # rename executable
 if(EMSCRIPTEN)
   # rename as index.html
   set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "index")
-  set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")
 else()
-  set(GAME_EXE_NAME "game")
-  set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${GAME_EXE_NAME})
-  set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")
+  # set(GAME_EXE_NAME "game")
+  # set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${GAME_EXE_NAME})
 endif()
 
-if(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
+if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
+  message("vcpkg for windows")
   set(VCPKG_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/thirdparty/vcpkg/installed/x64-windows/include)
-elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Darwin")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES Darwin)
+  message("vcpkg for Darwin")
   set(VCPKG_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/thirdparty/vcpkg/installed/arm64-osx/include)
-elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+elseif(${CMAKE_SYSTEM_NAME} MATCHES Linux)
+  message("vcpkg for Linux")
   set(VCPKG_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/thirdparty/vcpkg/installed/x64-linux/include)
 endif()
 
@@ -117,7 +120,7 @@ ENDIF()
 # actions for building release. Github actins will
 # copy over the /assets folder in the release mode,
 # and would fail if this symlink was created here.
-if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+if(${CMAKE_BUILD_TYPE} MATCHES Debug)
   message("creating symlink...")
   set(src ${CMAKE_SOURCE_DIR}/game/assets)
 

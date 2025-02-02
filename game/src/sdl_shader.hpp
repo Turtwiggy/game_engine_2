@@ -4,6 +4,9 @@
 
 namespace game2d {
 
+void
+InitializeAssetLoader();
+
 SDL_GPUShader*
 LoadShader(SDL_GPUDevice* device,
            const char* shaderFilename,

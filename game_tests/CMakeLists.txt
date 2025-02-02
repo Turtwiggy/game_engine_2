@@ -51,7 +51,7 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 endif()
 
 # Code coverage
-if(CMAKE_CXX_COMPILER_ID MATCHES GNU AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(CMAKE_CXX_COMPILER_ID MATCHES GNU AND CMAKE_BUILD_TYPE MATCHES Debug)
   message("setting code coverage options...")
   target_compile_options(game_tests PRIVATE --coverage) # -O0 and -g should already be set
   target_link_options(game_tests PRIVATE --coverage)

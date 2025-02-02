@@ -1,8 +1,8 @@
 gtest
-STL3
-tracy
 nlohmann-json
+sdl3[core,vulkan]
 stb
+tracy
 vulkan
 vulkan-memory-allocator
 --triplet
