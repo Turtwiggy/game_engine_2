@@ -7,10 +7,13 @@
 // #include <backends/imgui_impl_sdl3.h>
 // #include <backends/imgui_impl_vulkan.h>
 
+#include <SDL3/SDL_init.h>
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <mutex>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -112,8 +115,6 @@ bool render_thread_ready = false;
 int main_thread_waiting_for = 2;
 static SDL_Window* window;
 static SDL_GPUDevice* device;
-static SDL_GPUShader* frag_shader = nullptr;
-static SDL_GPUShader* vert_shader = nullptr;
 
 void
 WaitForGameThread()
@@ -212,29 +213,91 @@ GameThread()
   }
 };
 
+// Vertex Formats
+
+typedef struct PositionVertex
+{
+  float x, y, z;
+} PositionVertex;
+
+typedef struct PositionColorVertex
+{
+  float x, y, z;
+  Uint8 r, g, b, a;
+} PositionColorVertex;
+
+typedef struct PositionTextureVertex
+{
+  float x, y, z;
+  float u, v;
+} PositionTextureVertex;
+
 void
 RenderThread()
 {
   SDL_Log("(RenderThread) On main thread: %i", SDL_IsMainThread());
 
-  SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(device, window);
-  SDL_GPUColorTargetDescription hmm{ .format = format };
-  std::vector<SDL_GPUColorTargetDescription> descs{ hmm };
+  game2d::InitializeAssetLoader();
+
+  auto vert_shader = game2d::LoadShader(device, "PositionColor.vert", 0, 0, 0, 0);
+  if (vert_shader == NULL) {
+    SDL_Log("Failed to create vert shader");
+    exit(SDL_APP_FAILURE); // explode
+  };
+
+  auto frag_shader = game2d::LoadShader(device, "SolidColor.frag", 0, 0, 0, 0);
+  if (frag_shader == NULL) {
+    SDL_Log("Failed to create frag shader");
+    exit(SDL_APP_FAILURE); // explode
+  };
+
+  const std::vector<SDL_GPUColorTargetDescription> color_target_desc{
+    { .format = SDL_GetGPUSwapchainTextureFormat(device, window) },
+  };
+  const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
+    {
+      .slot = 0,
+      .pitch = sizeof(PositionColorVertex),
+      .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+      .instance_step_rate = 0,
+    },
+  };
+  const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
+    {
+      .location = 0,
+      .buffer_slot = 0,
+      .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+      .offset = 0,
+    },
+    {
+      .location = 1,
+      .buffer_slot = 0,
+      .format = SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM,
+      .offset = offsetof(PositionColorVertex, r),
+    },
+  };
 
   // Create the pipelines.
   SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
     .vertex_shader = vert_shader,
     .fragment_shader = frag_shader,
-    .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
-    .rasterizer_state = { 
-      .fill_mode = SDL_GPU_FILLMODE_FILL 
-    },
-    .target_info = {
-      .color_target_descriptions = descs.data(),
-      .num_color_targets = 1,
-    },
-  };
 
+    // Setup to match the vertex shader layout
+    .vertex_input_state = (SDL_GPUVertexInputState){
+      .vertex_buffer_descriptions = vertex_buffer_descriptions.data(),
+      .num_vertex_buffers = (Uint32)vertex_buffer_descriptions.size(),
+  	  .vertex_attributes = vertex_attributes.data(),
+			.num_vertex_attributes = (Uint32)vertex_attributes.size(),
+    },
+    .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+
+    .target_info = {
+      .color_target_descriptions = color_target_desc.data(),
+      .num_color_targets = (Uint32)color_target_desc.size(),
+    },
+};
+
+  pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
   auto* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
   if (fill_pipeline == nullptr) {
     throw new SDLException("Failed to create Fill GraphicsPipeline()");
@@ -247,6 +310,55 @@ RenderThread()
     throw new SDLException("Failed to create Line GraphicsPipeline()");
     exit(SDL_APP_FAILURE); // crash
   }
+
+  // Rect
+  const std::vector<PositionColorVertex> vertex_data{
+    // clang-format off
+    // xyz, rgba
+
+    // triangle 1
+    { -0.5, 0.5, 0.0,      255, 0,   0,   255 },
+    {  0.5, 0.5, 0.0,      0,   255, 0,   255 },
+    {  0.5, -0.5, 0.0,     0,   0,   255, 255 },
+
+    // {  -0.5, -0.5, 0.0,    225, 225, 0,   255 },
+    // clang-format on
+  };
+
+  const Uint32 vertex_data_mem_size = sizeof(PositionColorVertex) * vertex_data.size();
+
+  // Create the vertex buffer
+  const auto vertex_buffer_info = (SDL_GPUBufferCreateInfo){
+    .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
+    .size = vertex_data_mem_size,
+  };
+  auto vertex_buffer = SDL_CreateGPUBuffer(device, &vertex_buffer_info);
+
+  // To get data in to the vertex buffer, we have to use a transfer buffer.
+  const auto transfer_buffer_info = (SDL_GPUTransferBufferCreateInfo){
+    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+    .size = vertex_data_mem_size,
+  };
+  auto* transfer_buffer = SDL_CreateGPUTransferBuffer(device, &transfer_buffer_info);
+  if (!transfer_buffer)
+    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
+
+  // Map the buffer in to cpu memory, and copy the data in
+  auto* ptr = (PositionColorVertex*)SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
+  std::span transfer_data = std::span{ ptr, vertex_data.size() };
+  std::ranges::copy(vertex_data, transfer_data.begin());
+  SDL_UnmapGPUTransferBuffer(device, transfer_buffer); // note: need to unmap before aquire gpu command
+
+  // Upload the transfer data to the vertex buffer
+  auto* upload_cmd_buf = SDL_AcquireGPUCommandBuffer(device);
+  auto* copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
+  const auto buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
+  const auto buffer_region = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = vertex_data_mem_size };
+  SDL_UploadToGPUBuffer(copy_pass, &buffer_location, &buffer_region, false);
+  SDL_EndGPUCopyPass(copy_pass);
+  if (!SDL_SubmitGPUCommandBuffer(upload_cmd_buf))
+    throw SDLException("Unable to SDL_SubmitGPUCommandBuffer()");
+  SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
 
   const SDL_GPUViewport small_viewport = { 160, 120, 320, 240, 0.1f, 1.0f };
   const SDL_Rect scissor_rect = { 320, 240, 320, 240 };
@@ -265,8 +377,10 @@ RenderThread()
     // SDL_Log("(RenderThread) Update()");
     {
       SDL_GPUCommandBuffer* cmd_buf = SDL_AcquireGPUCommandBuffer(device);
-      if (cmd_buf == NULL)
+      if (cmd_buf == NULL) {
         throw SDLException("Could not aquire GPU command buffer");
+        exit(SDL_APP_FAILURE); // crash
+      }
 
       // https://wiki.libsdl.org/SDL3/SDL_WaitAndAcquireGPUSwapchainTexture
       SDL_GPUTexture* swapchain_texture;
@@ -284,11 +398,7 @@ RenderThread()
           .store_op = SDL_GPU_STOREOP_STORE,
         };
         std::vector color_targets = { col_info };
-        SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, color_targets.data(), color_targets.size(), NULL);
-
-        // Hello, Triangle
-
-        SDL_BindGPUGraphicsPipeline(render_pass, rend_data.use_wireframe_mode ? line_pipeline : fill_pipeline);
+        auto* render_pass = SDL_BeginGPURenderPass(cmd_buf, color_targets.data(), color_targets.size(), NULL);
 
         if (rend_data.use_small_viewport)
           SDL_SetGPUViewport(render_pass, &small_viewport);
@@ -296,7 +406,14 @@ RenderThread()
         if (rend_data.use_scissor_viewport)
           SDL_SetGPUScissor(render_pass, &scissor_rect);
 
-        SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
+        std::vector<SDL_GPUBufferBinding> bindings{
+          { .buffer = vertex_buffer, .offset = 0 },
+        };
+
+        SDL_BindGPUGraphicsPipeline(render_pass, rend_data.use_wireframe_mode ? line_pipeline : fill_pipeline);
+        SDL_BindGPUVertexBuffers(render_pass, 0, bindings.data(), bindings.size());
+        SDL_DrawGPUPrimitives(render_pass, vertex_data.size(), 1, 0, 0);
+
         SDL_EndGPURenderPass(render_pass);
       }
 
@@ -307,6 +424,11 @@ RenderThread()
 
     SignalRenderThread(); // done
   }
+
+  // Cleanup
+  SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
+  SDL_ReleaseGPUGraphicsPipeline(device, line_pipeline);
+  SDL_ReleaseGPUBuffer(device, vertex_buffer);
 };
 
 int
@@ -347,34 +469,19 @@ main(int argc, char* argv[])
   // Call this only on the MainThread
   SDL_Log("(RenderThread) -- CreateWindow");
 
-  SDL_WindowFlags window_flags = 0;
-  flags |= SDL_WINDOW_RESIZABLE;
-
   // SDL_CreateWindow: main thread
-  window = SDL_CreateWindow("Game", SDL_WINDOW_WIDTH, SDL_WINDOW_HEIGHT, window_flags);
+  window = SDL_CreateWindow("Game", SDL_WINDOW_WIDTH, SDL_WINDOW_HEIGHT, 0);
   if (window == NULL)
     throw SDLException("Couldn't SDL_CreateWindow()");
+
   SDL_ShowWindow(window);
+  SDL_SetWindowResizable(window, true);
 
   if (!SDL_ClaimWindowForGPUDevice(device, window))
     throw SDLException("Couldn't claim window for GPU device");
 
   auto device_driver = SDL_GetGPUDeviceDriver(device);
   SDL_Log("Using GPU device driver: %s", device_driver);
-
-  game2d::InitializeAssetLoader();
-
-  vert_shader = game2d::LoadShader(device, "RawTriangle.vert", 0, 0, 0, 0);
-  if (vert_shader == NULL) {
-    SDL_Log("Failed to create vert shader");
-    exit(SDL_APP_FAILURE); // explode
-  };
-
-  frag_shader = game2d::LoadShader(device, "SolidColor.frag", 0, 0, 0, 0);
-  if (frag_shader == NULL) {
-    SDL_Log("Failed to create frag shader");
-    exit(SDL_APP_FAILURE); // explode
-  };
 
   // Start threads, innit
   std::thread game_thread(GameThread);
@@ -407,21 +514,21 @@ main(int argc, char* argv[])
     // Once both threads finished their work,
     // RenderThread copies the GameThread data in to it's internal structures.
     // The 2 threads are working on their own, and sharing at the end of the frame.
+    //
+    // How to avoid copying data between threads?
+    //
+    // 1. Double buffering. Maintain two copies of the data,
+    // one for game thread, one for render thread.
+    // The game thread writes to one buffer while the render thread reads from the other.
+    // After each frame, the buffers are swapped.
+    //
+    // 2. Read-Write Locks.
+    // A read-write lock allows multiple threads to read data
+    // simultaneously but ensures exclusive access for writing.
+    // This can be useful if the render thread only needs to read data.
+    //
     {
       std::lock_guard<std::mutex> lock(mtx);
-
-      // How to avoid copying data between threads?
-      //
-      // 1. Double buffering. Maintain two copies of the data,
-      // one for game thread, one for render thread.
-      // The game thread writes to one buffer while the render thread reads from the other.
-      // After each frame, the buffers are swapped.
-      //
-      // 2. Read-Write Locks.
-      // A read-write lock allows multiple threads to read data
-      // simultaneously but ensures exclusive access for writing.
-      // This can be useful if the render thread only needs to read data.
-      //
 
       // MainThread to GameThread
       game_data.evts = evts;
@@ -455,22 +562,6 @@ main(int argc, char* argv[])
 
   return 0;
 };
-
-// Note: limiting renderthread fps would also
-// cause the gamethread to slow down execution which seems weird,
-// because gamethread waits for renderthread
-// if (limit_fps) {
-//   const Uint64 end_s = SDL_GetPerformanceCounter();
-//   const Uint64 elapsed_ns = (end_s - start_s) / ((float)SDL_GetPerformanceFrequency() * 1e9f);
-//   const Uint64 target_ns = 1e9 / (float)fps_limit;
-//   const Uint64 delay_ns = SDL_floor(target_ns - elapsed_ns);
-//   if (delay_ns > 0)
-//     SDL_DelayNS(delay_ns);
-// }
-
-// void
-// UpdateGameLogic(Uint64 dt_ns) {
-// SDL_Delay(16); // work
 
 // Note: can use std::async for parallelisable tasks...
 // e.g.
