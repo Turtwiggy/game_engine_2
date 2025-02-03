@@ -63,6 +63,7 @@
 // VkSwapchainKHR: Holds the images for the screen. It allows you to render things into a visible window. The KHR suffix shows that it comes from an extension, which in this case is VK_KHR_swapchain
 // VkSemaphore: Synchronizes GPU to GPU execution of commands. Used for syncing multiple command buffer submissions one after other.
 // VkFence: Synchronizes GPU to CPU execution of commands. Used to know if a command buffer has finished being executed on the GPU.
+
 // clang-format on
 
 // profiling cpu: TracyClient.cpp is all you need.
@@ -232,6 +233,11 @@ typedef struct PositionTextureVertex
   float u, v;
 } PositionTextureVertex;
 
+typedef struct Index
+{
+  Uint16 i;
+} Index;
+
 void
 RenderThread()
 {
@@ -254,6 +260,7 @@ RenderThread()
   const std::vector<SDL_GPUColorTargetDescription> color_target_desc{
     { .format = SDL_GetGPUSwapchainTextureFormat(device, window) },
   };
+
   const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
     {
       .slot = 0,
@@ -262,6 +269,8 @@ RenderThread()
       .instance_step_rate = 0,
     },
   };
+
+  // Setup to match the vertex shader layout
   const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
     {
       .location = 0,
@@ -281,8 +290,6 @@ RenderThread()
   SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
     .vertex_shader = vert_shader,
     .fragment_shader = frag_shader,
-
-    // Setup to match the vertex shader layout
     .vertex_input_state = (SDL_GPUVertexInputState){
       .vertex_buffer_descriptions = vertex_buffer_descriptions.data(),
       .num_vertex_buffers = (Uint32)vertex_buffer_descriptions.size(),
@@ -290,12 +297,16 @@ RenderThread()
 			.num_vertex_attributes = (Uint32)vertex_attributes.size(),
     },
     .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
-
     .target_info = {
       .color_target_descriptions = color_target_desc.data(),
       .num_color_targets = (Uint32)color_target_desc.size(),
     },
-};
+  };
+
+  // can release shaders after creating pipelines
+  SDL_Log("Releasing shaders... be free!");
+  SDL_ReleaseGPUShader(device, vert_shader);
+  SDL_ReleaseGPUShader(device, frag_shader);
 
   pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
   auto* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
@@ -315,17 +326,20 @@ RenderThread()
   const std::vector<PositionColorVertex> vertex_data{
     // clang-format off
     // xyz, rgba
-
-    // triangle 1
-    { -0.5, 0.5, 0.0,      255, 0,   0,   255 },
-    {  0.5, 0.5, 0.0,      0,   255, 0,   255 },
-    {  0.5, -0.5, 0.0,     0,   0,   255, 255 },
-
-    // {  -0.5, -0.5, 0.0,    225, 225, 0,   255 },
+    { -0.5, -0.5, 0,       255, 0,   0,   255 },   //
+    { 0.5, -0.5, 0,        0,   255, 0,   255 },   //
+    { 0.5, 0.5, 0,         0,   0,   255, 255 },   //
+    { -0.5, 0.5, 0,        255, 255, 0,   255 },   //
     // clang-format on
   };
 
+  const std::vector<Index> index_data{
+    { 0 }, { 1 }, { 2 }, //
+    { 0 }, { 2 }, { 3 },
+  };
+
   const Uint32 vertex_data_mem_size = sizeof(PositionColorVertex) * vertex_data.size();
+  const Uint32 index_data_mem_size = sizeof(Index) * index_data.size();
 
   // Create the vertex buffer
   const auto vertex_buffer_info = (SDL_GPUBufferCreateInfo){
@@ -334,27 +348,49 @@ RenderThread()
   };
   auto vertex_buffer = SDL_CreateGPUBuffer(device, &vertex_buffer_info);
 
+  // Create an index buffer
+  const auto index_buffer_info = (SDL_GPUBufferCreateInfo){
+    .usage = SDL_GPU_BUFFERUSAGE_INDEX,
+    .size = index_data_mem_size,
+  };
+  auto index_buffer = SDL_CreateGPUBuffer(device, &index_buffer_info);
+
   // To get data in to the vertex buffer, we have to use a transfer buffer.
   const auto transfer_buffer_info = (SDL_GPUTransferBufferCreateInfo){
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-    .size = vertex_data_mem_size,
+    .size = vertex_data_mem_size + index_data_mem_size,
   };
+
+  // Map the buffer in to cpu memory
   auto* transfer_buffer = SDL_CreateGPUTransferBuffer(device, &transfer_buffer_info);
   if (!transfer_buffer)
     throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
 
-  // Map the buffer in to cpu memory, and copy the data in
-  auto* ptr = (PositionColorVertex*)SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
-  std::span transfer_data = std::span{ ptr, vertex_data.size() };
-  std::ranges::copy(vertex_data, transfer_data.begin());
+  // Copy the data in
+
+  auto* ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
+
+  std::span vertex_buffer_data = { reinterpret_cast<PositionColorVertex*>(ptr), vertex_data.size() };
+  std::ranges::copy(vertex_data, vertex_buffer_data.begin());
+
+  std::span index_buffer_data = { reinterpret_cast<Index*>(ptr + vertex_data_mem_size), index_data.size() };
+  std::ranges::copy(index_data, index_buffer_data.begin());
+
   SDL_UnmapGPUTransferBuffer(device, transfer_buffer); // note: need to unmap before aquire gpu command
 
-  // Upload the transfer data to the vertex buffer
+  // Upload the transfer data to the vertex and index buffer
   auto* upload_cmd_buf = SDL_AcquireGPUCommandBuffer(device);
   auto* copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
-  const auto buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
-  const auto buffer_region = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = vertex_data_mem_size };
-  SDL_UploadToGPUBuffer(copy_pass, &buffer_location, &buffer_region, false);
+
+  const auto v_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
+  const auto v_buffer_region = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = vertex_data_mem_size };
+  SDL_UploadToGPUBuffer(copy_pass, &v_buffer_location, &v_buffer_region, false);
+
+  auto offset = vertex_data_mem_size;
+  const auto i_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = offset };
+  const auto i_buffer_region = SDL_GPUBufferRegion{ .buffer = index_buffer, .offset = 0, .size = index_data_mem_size };
+  SDL_UploadToGPUBuffer(copy_pass, &i_buffer_location, &i_buffer_region, false);
+
   SDL_EndGPUCopyPass(copy_pass);
   if (!SDL_SubmitGPUCommandBuffer(upload_cmd_buf))
     throw SDLException("Unable to SDL_SubmitGPUCommandBuffer()");
@@ -362,11 +398,6 @@ RenderThread()
 
   const SDL_GPUViewport small_viewport = { 160, 120, 320, 240, 0.1f, 1.0f };
   const SDL_Rect scissor_rect = { 320, 240, 320, 240 };
-
-  // clean up shader resources
-  SDL_Log("Releasing shaders... be free!");
-  SDL_ReleaseGPUShader(device, vert_shader);
-  SDL_ReleaseGPUShader(device, frag_shader);
 
   SignalRenderThread(); // done init()
   while (running) {
@@ -412,7 +443,11 @@ RenderThread()
 
         SDL_BindGPUGraphicsPipeline(render_pass, rend_data.use_wireframe_mode ? line_pipeline : fill_pipeline);
         SDL_BindGPUVertexBuffers(render_pass, 0, bindings.data(), bindings.size());
-        SDL_DrawGPUPrimitives(render_pass, vertex_data.size(), 1, 0, 0);
+
+        // Draw 1 instance
+        const SDL_GPUBufferBinding idx_buffer_binding = { .buffer = index_buffer, .offset = 0 };
+        SDL_BindGPUIndexBuffer(render_pass, &idx_buffer_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+        SDL_DrawGPUIndexedPrimitives(render_pass, index_data.size(), 1, 0, 0, 0);
 
         SDL_EndGPURenderPass(render_pass);
       }
