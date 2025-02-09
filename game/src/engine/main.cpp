@@ -8,19 +8,25 @@
 #include "sdl_exception.hpp"
 #include "sdl_shader.hpp"
 #include "sdl_surface.hpp"
+#include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_stdinc.h>
 using namespace game2d;
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_cpuinfo.h>
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_loadso.h>
 
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <format>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -104,9 +110,123 @@ struct RenderData
   bool use_wireframe_mode = false;
   bool use_small_viewport = false;
   bool use_scissor_viewport = false;
-
   int cur_sampler_idx = 0;
 };
+
+//
+// hotreload behaviour
+// inspired by:
+// https://gist.github.com/chrisdill/291c938605c200d079a88d0a7855f31a
+//
+
+// Functions we call from the dll
+typedef void (*game_init_func_t)(GameData* data);
+typedef void (*game_update_func_t)();
+typedef void (*game_refresh_func_t)(GameData* data);
+
+// Stubs for when we the dll functions are not loaded
+void
+game_init_stub(GameData* data) {};
+void
+game_update_stub(void) {};
+void
+game_refresh_stub(GameData* data) {};
+
+typedef struct sdl_game_code sdl_game_code;
+struct sdl_game_code
+{
+  SDL_SharedObject* game_code_dll;
+
+  game_init_func_t game_init;
+  game_update_func_t game_update;
+  game_refresh_func_t game_refresh;
+
+  bool is_valid;
+};
+
+bool
+CopyFile(const char* src_dll_name, const char* dst_dll_name)
+{
+  SDL_IOStream* src = SDL_IOFromFile(src_dll_name, "r");
+  SDL_IOStream* dst = SDL_IOFromFile(dst_dll_name, "w");
+
+  // Read source into buffer
+  auto size = SDL_GetIOSize(src);
+  void* buffer = SDL_calloc(1, size);
+  SDL_ReadIO(src, buffer, size);
+  SDL_WriteIO(dst, buffer, size);
+
+  SDL_CloseIO(src);
+  SDL_CloseIO(dst);
+  SDL_free(buffer);
+
+  return true;
+};
+
+sdl_game_code
+sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_name)
+{
+  sdl_game_code result = { 0 };
+
+  auto copy_result = CopyFile(src_dll_name.c_str(), dst_dll_name.c_str());
+  if (!copy_result) {
+    throw SDLException("Failed to copy dll.");
+    exit(SDL_APP_FAILURE);
+  }
+  SDL_Log("DLL copied...");
+
+  result.game_code_dll = SDL_LoadObject(dst_dll_name.c_str());
+  if (result.game_code_dll == NULL) {
+    throw SDLException("Failed to load dll.");
+    exit(SDL_APP_FAILURE);
+  }
+
+  auto init = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_init");
+  if (init == NULL) {
+    throw SDLException("why??");
+    exit(SDL_APP_FAILURE);
+  }
+  result.game_init = init;
+
+  auto update = (void (*)())SDL_LoadFunction(result.game_code_dll, "game_update");
+  if (init == NULL) {
+    throw SDLException("Failed to load init()");
+    exit(SDL_APP_FAILURE);
+  }
+  result.game_update = update;
+
+  auto refresh = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_refresh");
+  if (!refresh) {
+    throw SDLException("Failed to load refresh()");
+    exit(SDL_APP_FAILURE);
+  }
+  result.game_refresh = refresh;
+
+  result.is_valid = true;
+
+  SDL_Log("Load DLL... success");
+  return result;
+};
+
+void
+sdl_unload_game_code(sdl_game_code* game_code)
+{
+  if (game_code->game_code_dll) {
+    SDL_Log("Unload DLL...");
+    SDL_UnloadObject(game_code->game_code_dll);
+    game_code->game_code_dll = NULL;
+  }
+
+  game_code->is_valid = false;
+  game_code->game_init = game_init_stub;
+  game_code->game_update = game_update_stub;
+  game_code->game_refresh = game_refresh_stub;
+};
+
+//
+//
+//
+
 GameData game_data;
 RenderData rend_data;
 
@@ -120,6 +240,10 @@ bool render_thread_ready = false;
 int main_thread_waiting_for = 2;
 static SDL_Window* window;
 static SDL_GPUDevice* device;
+
+//
+// multithread behaviour
+//
 
 void
 WaitForGameThread()
@@ -181,12 +305,34 @@ const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
 void
 GameThread()
 {
-  SDL_Log("(GameThread) SDL_IsMainThread(): %i", SDL_IsMainThread());
+  const auto info_str = std::format("(GameThread) SDL_IsMainThread(): {}", SDL_IsMainThread());
+  SDL_Log("%s", info_str.c_str());
 
+#ifdef _WIN32
+  auto src_dll = "libGameDLL.dll";
+  auto dst_dll = "libGameDLL-locked.dll"; // when loaded, system processor locks it
+// #elif __linux__
+//   "libGameDLL.so";
+// #elif __APPLE__
+//   "libGameDLL.dylib";
+#endif
+
+  sdl_game_code game_code = sdl_load_game_code(src_dll, dst_dll);
+
+  if (!game_code.is_valid) {
+    throw std::runtime_error("Failed to load .dll");
+    exit(SDL_APP_FAILURE);
+  }
+
+  game_code.game_init(&game_data);
+
+  // SignalGameThread(); // done init()
   while (running) {
     static Uint64 game_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
+
+    bool rebuilding_dll = false;
 
     const auto& new_evts = game_data.evts;
     for (const SDL_Event& evt : new_evts) {
@@ -195,15 +341,31 @@ GameThread()
         const auto scancode_name = SDL_GetScancodeName(scancode);
         const auto down = evt.key.down;
         const auto repeat = evt.key.repeat;
-        SDL_Log("(GameThread) KeyDown %s %i %i", scancode_name, down, repeat);
+        // SDL_Log("(GameThread) KeyDown %s %i %i", scancode_name, down, repeat);
 
-        if (scancode == SDL_SCANCODE_KP_PLUS)
+        if (scancode == SDL_SCANCODE_KP_PLUS) {
           game_data.counter++;
-        if (scancode == SDL_SCANCODE_KP_MINUS)
+        }
+        if (scancode == SDL_SCANCODE_KP_MINUS) {
           game_data.counter--;
+        }
+
+        if (scancode == SDL_SCANCODE_9)
+          rebuilding_dll = true;
+
+        if (scancode == SDL_SCANCODE_KP_ENTER) {
+          if (game_code.is_valid) {
+            SDL_Log("want to update dll()");
+
+            game_code.game_update();
+
+            auto gt_str = std::format("(gamethread) {}", game_data.counter);
+            SDL_Log("%s", gt_str.c_str());
+          }
+        }
       }
       if (evt.type == SDL_EVENT_KEY_UP) {
-        SDL_Log("(GameThread) KeyUp");
+        // SDL_Log("(GameThread) KeyUp");
       }
     }
     game_data.evts.clear();
@@ -211,7 +373,33 @@ GameThread()
     // SDL_Log("(GameThread) Update()");
     const float dt = dt_ns * 1e-9;
     game_data.dt += dt;
-    // SDL_Log("Time: %f", game_data.dt);
+
+    // thread-blocking rebuild
+    if (rebuilding_dll) {
+      auto build_script = "rebuild_dll.bat";
+      auto base_path = SDL_GetBasePath();
+      auto full_path = std::format("{}assets/scripts/{}", base_path, build_script);
+
+      SDL_Log("Wants to rebuild dll...");
+
+      SDL_Time ticks;
+      if (!SDL_GetCurrentTime(&ticks)) {
+        throw SDLException("Failed to get time");
+        exit(SDL_APP_FAILURE);
+      }
+
+      const auto cmd = std::format("{}", full_path, (Sint64)ticks);
+      const int result = std::system(cmd.c_str());
+      if (result != 0) {
+        SDL_Log("Build failed...");
+      } else {
+        SDL_Log("Done...");
+        sdl_unload_game_code(&game_code);
+        game_code = sdl_load_game_code(src_dll, dst_dll);
+        // game_code.game_refresh(&game_data);
+        game_code.game_refresh(&game_data);
+      }
+    }
 
     SignalGameThread();
     WaitForMainThread(); // wait until the data is copied
@@ -245,7 +433,8 @@ typedef struct Index
 void
 RenderThread()
 {
-  SDL_Log("(RenderThread) SDL_IsMainThread(): %i", SDL_IsMainThread());
+  const auto info_str = std::format("(RenderThread) SDL_IsMainThread(): {}", SDL_IsMainThread());
+  SDL_Log("%s", info_str.c_str());
 
   game2d::InitializeAssetLoader();
 
@@ -609,6 +798,8 @@ RenderThread()
 int
 main(int argc, char* argv[])
 {
+  // setvbuf(stdout, nullptr, _IONBF, 0); // dont buffer
+
 #if defined(SDL_PLATFORM_WIN32)
   SDL_Log("Hello, Windows!");
 #elif defined(SDL_PLATFORM_MACOS)
@@ -662,7 +853,9 @@ main(int argc, char* argv[])
   // Start threads, innit
   std::thread game_thread(GameThread);
   std::thread render_thread(RenderThread);
+
   WaitForRenderThread(); // wait for it to init
+  // WaitForGameThread();   // wait for it to init
 
   // SDL_AddEventWatch(SDL_EventFilter filter, void *userdata)
 
@@ -713,7 +906,6 @@ main(int argc, char* argv[])
       // rend_data.counter = game_data.counter;
       // rend_data.dt = game_data.dt;
       // rend_data.use_wireframe_mode =
-      // SDL_Log("(MainThread) counter: %llu", game_data.counter);
 
       rend_data.use_wireframe_mode = false;
       rend_data.use_scissor_viewport = false;

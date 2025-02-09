@@ -4,6 +4,7 @@
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_log.h>
 
+#include <format>
 #include <stdexcept>
 
 namespace game2d {
@@ -36,7 +37,7 @@ LoadShader(SDL_GPUDevice* device,
     return NULL;
   }
 
-  char fullPath[256];
+  char full_path[256];
   SDL_GPUShaderFormat backendFormats = SDL_GetGPUShaderFormats(device);
   SDL_GPUShaderFormat format = SDL_GPU_SHADERFORMAT_INVALID;
   const char* entrypoint;
@@ -44,15 +45,15 @@ LoadShader(SDL_GPUDevice* device,
   auto assets = "assets/shaders/compiled";
 
   if (backendFormats & SDL_GPU_SHADERFORMAT_SPIRV) {
-    SDL_snprintf(fullPath, sizeof(fullPath), "%s%s/SPIRV/%s.spv", BasePath, assets, shaderFilename);
+    SDL_snprintf(full_path, sizeof(full_path), "%s%s/SPIRV/%s.spv", BasePath, assets, shaderFilename);
     format = SDL_GPU_SHADERFORMAT_SPIRV;
     entrypoint = "main";
   } else if (backendFormats & SDL_GPU_SHADERFORMAT_MSL) {
-    SDL_snprintf(fullPath, sizeof(fullPath), "%s%s/MSL/%s.msl", BasePath, assets, shaderFilename);
+    SDL_snprintf(full_path, sizeof(full_path), "%s%s/MSL/%s.msl", BasePath, assets, shaderFilename);
     format = SDL_GPU_SHADERFORMAT_MSL;
     entrypoint = "main0";
   } else if (backendFormats & SDL_GPU_SHADERFORMAT_DXIL) {
-    SDL_snprintf(fullPath, sizeof(fullPath), "%s%s/DXIL/%s.dxil", BasePath, assets, shaderFilename);
+    SDL_snprintf(full_path, sizeof(full_path), "%s%s/DXIL/%s.dxil", BasePath, assets, shaderFilename);
     format = SDL_GPU_SHADERFORMAT_DXIL;
     entrypoint = "main";
   } else {
@@ -60,12 +61,14 @@ LoadShader(SDL_GPUDevice* device,
     return NULL;
   }
 
-  SDL_Log("Loading shader... %s", fullPath);
+  const auto load_str = std::format("Loading shader... {}", full_path);
+  SDL_Log("%s", load_str.c_str());
 
   size_t codeSize;
-  void* code = SDL_LoadFile(fullPath, &codeSize);
+  void* code = SDL_LoadFile(full_path, &codeSize);
   if (code == NULL) {
-    SDL_Log("Failed to load shader from disk! %s", fullPath);
+    const auto err_str = std::format("Failed to load shader from disk! {}", full_path);
+    SDL_Log("%s", err_str.c_str());
     return NULL;
   }
 
@@ -84,7 +87,7 @@ LoadShader(SDL_GPUDevice* device,
 
   SDL_GPUShader* shader = SDL_CreateGPUShader(device, &shader_info);
   if (shader == NULL) {
-    SDL_Log("Failed to create shader!");
+    SDL_Log("%s", "Failed to create shader!");
     SDL_free(code);
     return NULL;
   }

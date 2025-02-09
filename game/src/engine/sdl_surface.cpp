@@ -30,17 +30,18 @@ LoadBMP(const char* imageFilename, int desiredChannels)
 
   result = SDL_LoadBMP(fullPath);
   if (result == NULL) {
-    SDL_Log("Failed to load BMP: %s", SDL_GetError());
+    throw SDLException("Failed to load BMP!");
     return NULL;
   }
 
   if (desiredChannels == 4) {
     format = SDL_PIXELFORMAT_ABGR8888;
   } else {
-    SDL_assert(!"Unexpected desiredChannels");
+    throw std::runtime_error("Unexpected number of channnels (no alpha?)");
     SDL_DestroySurface(result);
     return NULL;
   }
+
   if (result->format != format) {
     SDL_Surface* next = SDL_ConvertSurface(result, format);
     SDL_DestroySurface(result);

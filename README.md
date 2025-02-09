@@ -3,6 +3,12 @@
 [![Linux](https://github.com/Turtwiggy/game_engine/actions/workflows/linux.yml/badge.svg)](https://github.com/Turtwiggy/game_engine/actions/workflows/linux.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
+### Features
+
+- C++20
+- SDL3 (+GPU Api)
+- Hot reload c++ code
+
 ### Install prerequisites
 
 - c++ compiler (MSVC, g++, clang)
