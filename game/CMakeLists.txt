@@ -42,9 +42,9 @@ file(GLOB_RECURSE SRC_FILES
 if("${CMAKE_BUILD_TYPE}" MATCHES "Release" AND WIN32)
   # "The WIN32 argument instructs the compiler to build a
   # Windows GUI app, which doesn't show a console."
-  add_executable(game WIN32 ${SRC_FILES} assets/textures/resource.rc)
+  add_executable(game WIN32 ${SRC_FILES})
 elseif(WIN32)
-  add_executable(game ${SRC_FILES} assets/textures/resource.rc)
+  add_executable(game ${SRC_FILES})
 else()
   add_executable(game ${SRC_FILES})
 endif()
@@ -70,6 +70,7 @@ link_libs(game)
 target_include_directories(game PRIVATE
 
   # ${IMGUI_INCLUDES}
+  ${Stb_INCLUDE_DIR}
   ${VCPKG_INCLUDES}
   ${OPTICK_INCLUDES}
   ${CMAKE_SOURCE_DIR}/thirdparty/entt/single_include

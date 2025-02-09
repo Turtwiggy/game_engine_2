@@ -11,11 +11,11 @@ function(find_packages)
 
   # find_package(SDL3 CONFIG REQUIRED)
   find_package(nlohmann_json CONFIG REQUIRED)
+  find_package(Stb REQUIRED)
   find_package(Tracy CONFIG REQUIRED)
 
   # find_package(Vulkan REQUIRED)
   # find_package(VulkanMemoryAllocator CONFIG REQUIRED)
-  # find_package(Stb REQUIRED)
 endfunction()
 
 function(link_libs project)

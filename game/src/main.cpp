@@ -1,13 +1,20 @@
-#include "sdl_shader.hpp"
 
-#include <SDL3/SDL.h>
 // #include <vulkan/vulkan.h>
 // #include <vk_mem_alloc.h>
 // #include <vulkan/vk_enum_string_helper.h>
 // #include <backends/imgui_impl_sdl3.h>
 // #include <backends/imgui_impl_vulkan.h>
 
+#include "sdl_exception.hpp"
+#include "sdl_shader.hpp"
+#include "sdl_surface.hpp"
+using namespace game2d;
+
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_cpuinfo.h>
+#include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
+
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -38,6 +45,8 @@
 // ui sdf rendering: https://github.com/SaschaWillems/Vulkan/tree/master/examples/distancefieldfonts
 // effects: radial blur: https://github.com/SaschaWillems/Vulkan/blob/master/examples/radialblur/radialblur.cpp
 // effects: bloom: https://github.com/SaschaWillems/Vulkan/tree/master/examples/bloom
+
+// https://github.com/TheSpydog/SDL_gpu_examples
 
 // What it takes to draw a triangle.
 // 1. Physical device selection
@@ -84,13 +93,6 @@ static int fps_limit = 240;
 #define SDL_WINDOW_WIDTH 1280
 #define SDL_WINDOW_HEIGHT 720
 
-class SDLException final : public std::runtime_error
-{
-public:
-  explicit SDLException(const std::string& message)
-    : std::runtime_error(message + '\n' + SDL_GetError()) {};
-};
-
 struct GameData
 {
   Uint64 counter = 0;
@@ -102,6 +104,8 @@ struct RenderData
   bool use_wireframe_mode = false;
   bool use_small_viewport = false;
   bool use_scissor_viewport = false;
+
+  int cur_sampler_idx = 0;
 };
 GameData game_data;
 RenderData rend_data;
@@ -177,7 +181,7 @@ const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
 void
 GameThread()
 {
-  SDL_Log("(GameThread) On main thread: %i", SDL_IsMainThread());
+  SDL_Log("(GameThread) SDL_IsMainThread(): %i", SDL_IsMainThread());
 
   while (running) {
     static Uint64 game_past = 0;
@@ -241,21 +245,35 @@ typedef struct Index
 void
 RenderThread()
 {
-  SDL_Log("(RenderThread) On main thread: %i", SDL_IsMainThread());
+  SDL_Log("(RenderThread) SDL_IsMainThread(): %i", SDL_IsMainThread());
 
   game2d::InitializeAssetLoader();
 
-  auto vert_shader = game2d::LoadShader(device, "PositionColor.vert", 0, 0, 0, 0);
+  auto vert_shader = game2d::LoadShader(device, "TexturedQuad.vert", 0, 0, 0, 0);
   if (vert_shader == NULL) {
     SDL_Log("Failed to create vert shader");
     exit(SDL_APP_FAILURE); // explode
   };
 
-  auto frag_shader = game2d::LoadShader(device, "SolidColor.frag", 0, 0, 0, 0);
+  auto frag_shader = game2d::LoadShader(device, "TexturedQuad.frag", 1, 0, 0, 0);
   if (frag_shader == NULL) {
     SDL_Log("Failed to create frag shader");
     exit(SDL_APP_FAILURE); // explode
   };
+
+  // Load an image.
+  // SDL_Surface* image_data = LoadBMP("ravioli.bmp", 4);
+  SDL_Surface* image_data = LoadIMG("a_star.png");
+  if (!image_data) {
+    throw SDLException("Failed to load image.");
+    exit(SDL_APP_FAILURE); // explode
+  }
+
+  const char* SamplerNames[] = {
+    "PointClamp", "PointWrap", "LinearClamp", "LinearWrap", "AnisotropicClamp", "AnisotropicWrap",
+  };
+
+  using VertexFinal = PositionTextureVertex;
 
   const std::vector<SDL_GPUColorTargetDescription> color_target_desc{
     { .format = SDL_GetGPUSwapchainTextureFormat(device, window) },
@@ -264,7 +282,7 @@ RenderThread()
   const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
     {
       .slot = 0,
-      .pitch = sizeof(PositionColorVertex),
+      .pitch = sizeof(VertexFinal),
       .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
       .instance_step_rate = 0,
     },
@@ -273,16 +291,18 @@ RenderThread()
   // Setup to match the vertex shader layout
   const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
     {
+      // xyz is 3 floats
       .location = 0,
       .buffer_slot = 0,
       .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
       .offset = 0,
     },
     {
+      // uv is a 2 floats
       .location = 1,
       .buffer_slot = 0,
-      .format = SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM,
-      .offset = offsetof(PositionColorVertex, r),
+      .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+      .offset = offsetof(VertexFinal, u),
     },
   };
 
@@ -311,25 +331,88 @@ RenderThread()
   pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
   auto* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
   if (fill_pipeline == nullptr) {
-    throw new SDLException("Failed to create Fill GraphicsPipeline()");
+    throw SDLException("Failed to create Fill GraphicsPipeline()");
     exit(SDL_APP_FAILURE); // crash
   }
 
   pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
   auto* line_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
   if (line_pipeline == nullptr) {
-    throw new SDLException("Failed to create Line GraphicsPipeline()");
+    throw SDLException("Failed to create Line GraphicsPipeline()");
     exit(SDL_APP_FAILURE); // crash
   }
 
+  const auto s0 = SDL_GPUSamplerCreateInfo{
+    .min_filter = SDL_GPU_FILTER_NEAREST,
+    .mag_filter = SDL_GPU_FILTER_NEAREST,
+    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+  };
+  const auto s1 = SDL_GPUSamplerCreateInfo{
+    .min_filter = SDL_GPU_FILTER_NEAREST,
+    .mag_filter = SDL_GPU_FILTER_NEAREST,
+    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+  };
+  const auto s2 = SDL_GPUSamplerCreateInfo{
+    .min_filter = SDL_GPU_FILTER_LINEAR,
+    .mag_filter = SDL_GPU_FILTER_LINEAR,
+    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+  };
+  const auto s3 = SDL_GPUSamplerCreateInfo{
+    .min_filter = SDL_GPU_FILTER_LINEAR,
+    .mag_filter = SDL_GPU_FILTER_LINEAR,
+    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+  };
+  const auto s4 = SDL_GPUSamplerCreateInfo{
+    .min_filter = SDL_GPU_FILTER_LINEAR,
+    .mag_filter = SDL_GPU_FILTER_LINEAR,
+    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+    .max_anisotropy = 4,
+    .enable_anisotropy = true,
+  };
+  const auto s5 = SDL_GPUSamplerCreateInfo{
+    .min_filter = SDL_GPU_FILTER_LINEAR,
+    .mag_filter = SDL_GPU_FILTER_LINEAR,
+    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
+    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
+    .max_anisotropy = 4,
+    .enable_anisotropy = true,
+  };
+
+  //  "PointClamp", "PointWrap", "LinearClamp", "LinearWrap", "AnisotropicClamp", "AnisotropicWrap",
+  const auto samplers = std::vector{
+    SDL_CreateGPUSampler(device, &s0), SDL_CreateGPUSampler(device, &s1), SDL_CreateGPUSampler(device, &s2),
+    SDL_CreateGPUSampler(device, &s3), SDL_CreateGPUSampler(device, &s4), SDL_CreateGPUSampler(device, &s5),
+  };
+
   // Rect
-  const std::vector<PositionColorVertex> vertex_data{
+  const std::vector<PositionTextureVertex> vertex_data{
     // clang-format off
-    // xyz, rgba
-    { -0.5, -0.5, 0,       255, 0,   0,   255 },   //
-    { 0.5, -0.5, 0,        0,   255, 0,   255 },   //
-    { 0.5, 0.5, 0,         0,   0,   255, 255 },   //
-    { -0.5, 0.5, 0,        255, 255, 0,   255 },   //
+    // xyz, uv
+    // { -0.5, -0.5, 0,      0.0f, 1.0f },   //
+    // { 0.5, -0.5, 0,       1.0f, 1.0f },   //
+    // { 0.5, 0.5, 0,        1.0f, 1.0f },   //
+    // { -0.5, 0.5, 0,       0.0f, 1.0f },   //
+    {-0.5, 0.5, 0, 0, 0},
+    {0.5, 0.5, 0, 1, 0},
+    {0.5, -0.5, 0, 1, 1},
+    {-0.5, -0.5, 0, 0, 1} ,
     // clang-format on
   };
 
@@ -338,7 +421,7 @@ RenderThread()
     { 0 }, { 2 }, { 3 },
   };
 
-  const Uint32 vertex_data_mem_size = sizeof(PositionColorVertex) * vertex_data.size();
+  const Uint32 vertex_data_mem_size = sizeof(VertexFinal) * vertex_data.size();
   const Uint32 index_data_mem_size = sizeof(Index) * index_data.size();
 
   // Create the vertex buffer
@@ -347,6 +430,9 @@ RenderThread()
     .size = vertex_data_mem_size,
   };
   auto vertex_buffer = SDL_CreateGPUBuffer(device, &vertex_buffer_info);
+  if (!vertex_buffer)
+    throw SDLException("Failed to create GpuBuffer");
+  SDL_SetGPUBufferName(device, vertex_buffer, "VertexBuffer");
 
   // Create an index buffer
   const auto index_buffer_info = (SDL_GPUBufferCreateInfo){
@@ -354,8 +440,30 @@ RenderThread()
     .size = index_data_mem_size,
   };
   auto index_buffer = SDL_CreateGPUBuffer(device, &index_buffer_info);
+  if (!index_buffer)
+    throw SDLException("Failed to create GpuBuffer");
+  SDL_SetGPUBufferName(device, index_buffer, "IndexBuffer");
 
+  // Create a texture
+  SDL_GPUTextureCreateInfo texture_create_info = {
+    .type = SDL_GPU_TEXTURETYPE_2D,
+    .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+    .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+    .width = static_cast<Uint32>(image_data->w),
+    .height = static_cast<Uint32>(image_data->h),
+    .layer_count_or_depth = 1,
+    .num_levels = 1,
+  };
+  auto* Texture = SDL_CreateGPUTexture(device, &texture_create_info);
+  if (!Texture) {
+    throw SDLException("Failed to CreateGPUTexture()");
+    exit(SDL_APP_FAILURE); // crash
+  }
+  SDL_SetGPUTextureName(device, Texture, "RavioliTexture");
+
+  //
   // To get data in to the vertex buffer, we have to use a transfer buffer.
+  //
   const auto transfer_buffer_info = (SDL_GPUTransferBufferCreateInfo){
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
     .size = vertex_data_mem_size + index_data_mem_size,
@@ -370,7 +478,7 @@ RenderThread()
 
   auto* ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
 
-  std::span vertex_buffer_data = { reinterpret_cast<PositionColorVertex*>(ptr), vertex_data.size() };
+  std::span vertex_buffer_data = { reinterpret_cast<VertexFinal*>(ptr), vertex_data.size() };
   std::ranges::copy(vertex_data, vertex_buffer_data.begin());
 
   std::span index_buffer_data = { reinterpret_cast<Index*>(ptr + vertex_data_mem_size), index_data.size() };
@@ -378,7 +486,27 @@ RenderThread()
 
   SDL_UnmapGPUTransferBuffer(device, transfer_buffer); // note: need to unmap before aquire gpu command
 
+  //
+  // Start texture transfer buffer
+  //
+  const auto texture_transfer_buffer_create_info = (SDL_GPUTransferBufferCreateInfo){
+    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+    .size = (Uint32)(image_data->w * image_data->h * 4),
+  };
+  // Map the buffer in to cpu memory
+  auto* texture_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &texture_transfer_buffer_create_info);
+  if (!texture_transfer_buffer)
+    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
+
+  // Copy data in to transfer buffer
+  auto* texture_ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, texture_transfer_buffer, false);
+  SDL_memcpy(texture_ptr, image_data->pixels, image_data->w * image_data->h * 4);
+  SDL_UnmapGPUTransferBuffer(device, texture_transfer_buffer);
+
+  //
   // Upload the transfer data to the vertex and index buffer
+  //
+
   auto* upload_cmd_buf = SDL_AcquireGPUCommandBuffer(device);
   auto* copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
 
@@ -391,10 +519,15 @@ RenderThread()
   const auto i_buffer_region = SDL_GPUBufferRegion{ .buffer = index_buffer, .offset = 0, .size = index_data_mem_size };
   SDL_UploadToGPUBuffer(copy_pass, &i_buffer_location, &i_buffer_region, false);
 
+  const auto ti = SDL_GPUTextureTransferInfo{ .transfer_buffer = texture_transfer_buffer, .offset = 0 /* zero out */ };
+  const auto tr = SDL_GPUTextureRegion{ .texture = Texture, .w = (Uint32)image_data->w, .h = (Uint32)image_data->h, .d = 1 };
+  SDL_UploadToGPUTexture(copy_pass, &ti, &tr, false);
+
   SDL_EndGPUCopyPass(copy_pass);
   if (!SDL_SubmitGPUCommandBuffer(upload_cmd_buf))
     throw SDLException("Unable to SDL_SubmitGPUCommandBuffer()");
   SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
+  SDL_ReleaseGPUTransferBuffer(device, texture_transfer_buffer);
 
   const SDL_GPUViewport small_viewport = { 160, 120, 320, 240, 0.1f, 1.0f };
   const SDL_Rect scissor_rect = { 320, 240, 320, 240 };
@@ -437,22 +570,29 @@ RenderThread()
         if (rend_data.use_scissor_viewport)
           SDL_SetGPUScissor(render_pass, &scissor_rect);
 
-        std::vector<SDL_GPUBufferBinding> bindings{
-          { .buffer = vertex_buffer, .offset = 0 },
-        };
-
         SDL_BindGPUGraphicsPipeline(render_pass, rend_data.use_wireframe_mode ? line_pipeline : fill_pipeline);
+
+        const std::vector<SDL_GPUBufferBinding> bindings{ { .buffer = vertex_buffer, .offset = 0 } };
         SDL_BindGPUVertexBuffers(render_pass, 0, bindings.data(), bindings.size());
 
-        // Draw 1 instance
         const SDL_GPUBufferBinding idx_buffer_binding = { .buffer = index_buffer, .offset = 0 };
         SDL_BindGPUIndexBuffer(render_pass, &idx_buffer_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+
+        // Clamp the counter
+        int counter = rend_data.cur_sampler_idx;
+        counter = counter < 0 ? samplers.size() - 1 : counter;
+        counter = counter % samplers.size();
+
+        auto& sampler = samplers[counter];
+        const SDL_GPUTextureSamplerBinding tex_sampler_binding = { .texture = Texture, .sampler = sampler };
+        SDL_BindGPUFragmentSamplers(render_pass, 0, &tex_sampler_binding, 1);
+
         SDL_DrawGPUIndexedPrimitives(render_pass, index_data.size(), 1, 0, 0, 0);
 
         SDL_EndGPURenderPass(render_pass);
       }
 
-      auto submit = SDL_SubmitGPUCommandBuffer(cmd_buf);
+      const auto submit = SDL_SubmitGPUCommandBuffer(cmd_buf);
       if (!submit)
         throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
     }
@@ -484,7 +624,8 @@ main(int argc, char* argv[])
 #endif
 
   SDL_Log("Hello, MainThread!");
-  SDL_Log("(main()) main thread: %i", SDL_IsMainThread());
+  SDL_Log("You have %i logical cpu cores", SDL_GetNumLogicalCPUCores());
+  SDL_Log("(main()) SDL_IsMainThread(): %i", SDL_IsMainThread());
 
   if (!SDL_SetAppMetadata("Example Snake game", "1.0", "com.blueberrygames.game"))
     throw SDLException("Couldn't SDL_SetAppMetadata()");
@@ -573,15 +714,18 @@ main(int argc, char* argv[])
       // rend_data.dt = game_data.dt;
       // rend_data.use_wireframe_mode =
       // SDL_Log("(MainThread) counter: %llu", game_data.counter);
+
       rend_data.use_wireframe_mode = false;
       rend_data.use_scissor_viewport = false;
       rend_data.use_small_viewport = false;
-      if (game_data.counter == 1)
-        rend_data.use_wireframe_mode = true;
-      if (game_data.counter == 2)
-        rend_data.use_scissor_viewport = true;
-      if (game_data.counter == 3)
-        rend_data.use_small_viewport = true;
+      // if (game_data.counter == 1)
+      //   rend_data.use_wireframe_mode = true;
+      // if (game_data.counter == 2)
+      //   rend_data.use_scissor_viewport = true;
+      // if (game_data.counter == 3)
+      //   rend_data.use_small_viewport = true;
+
+      rend_data.cur_sampler_idx = game_data.counter;
     }
 
     // SDL_Log("(MainThread) Done");
