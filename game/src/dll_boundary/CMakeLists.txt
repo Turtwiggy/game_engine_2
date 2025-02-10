@@ -21,6 +21,9 @@ include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-gcc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
 find_packages()
 
+set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src)
+set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
+
 # Add source files.
 file(GLOB_RECURSE SRC_FILES
   ${CMAKE_SOURCE_DIR}/game/src/dll_boundary/*.cpp
@@ -33,6 +36,7 @@ add_library(GameDLL SHARED
 
 # Link Libraries
 link_libs(GameDLL)
+target_link_libraries(GameDLL PRIVATE ${BOX2D_LIBRARY})
 
 # Define the export macro for the .dll
 target_compile_definitions(GameDLL PRIVATE
@@ -40,6 +44,9 @@ target_compile_definitions(GameDLL PRIVATE
 )
 
 target_include_directories(GameDLL PUBLIC
+  ${VCPKG_INCLUDES}
+  ${CMAKE_SOURCE_DIR}/thirdparty/box2d/include
+  ${CMAKE_SOURCE_DIR}/thirdparty/entt/single_include
   ${CMAKE_SOURCE_DIR}/src/dll_boundary
 )
 

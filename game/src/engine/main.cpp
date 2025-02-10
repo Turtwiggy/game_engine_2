@@ -5,26 +5,30 @@
 // #include <backends/imgui_impl_sdl3.h>
 // #include <backends/imgui_impl_vulkan.h>
 
+#include "box2d/id.h"
+#include "common.hpp"
 #include "sdl_exception.hpp"
 #include "sdl_shader.hpp"
 #include "sdl_surface.hpp"
-#include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_stdinc.h>
+#include "threadsafe_queue.hpp"
 using namespace game2d;
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_cpuinfo.h>
+#include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_loadso.h>
+#include <SDL3/SDL_stdinc.h>
+#include <box2d/box2d.h>
+#include <entt/entt.hpp>
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <cstddef>
 #include <format>
-#include <mutex>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <thread>
@@ -99,18 +103,13 @@ static int fps_limit = 240;
 #define SDL_WINDOW_WIDTH 1280
 #define SDL_WINDOW_HEIGHT 720
 
-struct GameData
-{
-  Uint64 counter = 0;
-  float dt = 0.0f;
-  std::vector<SDL_Event> evts;
-};
 struct RenderData
 {
   bool use_wireframe_mode = false;
   bool use_small_viewport = false;
   bool use_scissor_viewport = false;
   int cur_sampler_idx = 0;
+  std::vector<TransformComponent> transforms;
 };
 
 //
@@ -224,76 +223,30 @@ sdl_unload_game_code(sdl_game_code* game_code)
 };
 
 //
-//
+// DATAAAAA
 //
 
-GameData game_data;
-RenderData rend_data;
+//
+// idea:
+// read buffer 0
+// write to buffer 1
+// swap the buffers at the end of the game update,
+// ensuring the renderer always sees a stable snapshot.
+//
+// clang-format off
+entt::registry game_r;
+GameData game_data = {game_r};
+RenderData rend_data[2];
+std::atomic<int> current_read_buffer = 0;
+RenderData& GetWriteBuffer(){return rend_data[1 - current_read_buffer.load()];};
+const RenderData GetReadBuffer(){return rend_data[current_read_buffer.load()];}; // take a copy
+void SwapBuffers() {current_read_buffer.store(1 - current_read_buffer.load());};
+// clang-format on
 
+EventQueue<SDL_Event> event_queue;
 std::atomic<bool> running(true);
-std::mutex mtx;
-std::condition_variable cv_game_t;
-std::condition_variable cv_rend_t;
-std::condition_variable cv_main_t;
-bool game_thread_ready = false;
-bool render_thread_ready = false;
-int main_thread_waiting_for = 2;
 static SDL_Window* window;
 static SDL_GPUDevice* device;
-
-//
-// multithread behaviour
-//
-
-void
-WaitForGameThread()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-  cv_game_t.wait(lock, [] { return game_thread_ready; });
-  game_thread_ready = false;
-};
-
-void
-SignalGameThread()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-  game_thread_ready = true;
-  cv_game_t.notify_one(); // wake up main()
-};
-
-void
-WaitForRenderThread()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-  cv_rend_t.wait(lock, [] { return render_thread_ready; });
-  render_thread_ready = false;
-};
-
-void
-SignalRenderThread()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-  render_thread_ready = true;
-  cv_rend_t.notify_one(); // wake up main
-};
-
-void
-WaitForMainThread()
-{
-  std::unique_lock<std::mutex> lock(mtx);
-  cv_main_t.wait(lock, [] { return main_thread_waiting_for > 0; });
-
-  // If you're woken up, main thread no longer waiting for you?
-  main_thread_waiting_for--;
-};
-
-void
-SignalMainThread()
-{
-  std::lock_guard<std::mutex> lock(mtx);
-  main_thread_waiting_for = 2; // wait for 2 threads to finish now
-  cv_main_t.notify_all();
-};
 
 const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
   Uint64 dt_ns = now - past;
@@ -326,55 +279,136 @@ GameThread()
 
   game_code.game_init(&game_data);
 
+  //
+  // physics innit
+  //
+
+  const auto logical_cpu_cores = SDL_GetNumLogicalCPUCores();
+  b2Vec2 gravity = { 0.0f, 0.0f };
+  b2WorldDef world_def = b2DefaultWorldDef();
+  world_def.gravity = gravity;
+
+  // threads used (main, game, render)
+  const int used_threads = 3;
+  const int max_thread_count = std::max(1, logical_cpu_cores - used_threads);
+  SDL_Log("%s", std::format("Giving box2d {} threads", max_thread_count).c_str());
+
+  // #define MAX_TASKS 128
+  // #define THREAD_LIMIT 32
+  // world_def.workerCount = max_thread_count;
+  // world_def.enqueueTask = EnqueueTask;
+  // world_def.finishTask = FinishTask;
+  // worldDef.userTaskContext = this;
+  b2WorldId world_id = b2CreateWorld(&world_def);
+
+  // Box2D example: SMASH
+  {
+    {
+      b2Polygon box = b2MakeBox(4.0f, 4.0f);
+
+      b2BodyDef bodyDef = b2DefaultBodyDef();
+      bodyDef.type = b2_dynamicBody;
+      bodyDef.position = (b2Vec2){ -20.0f, 0.0f };
+      bodyDef.linearVelocity = (b2Vec2){ 40.0f, 0.0f };
+      b2BodyId bodyId = b2CreateBody(world_id, &bodyDef);
+
+      b2ShapeDef shapeDef = b2DefaultShapeDef();
+      shapeDef.density = 8.0f;
+      b2CreatePolygonShape(bodyId, &shapeDef, &box);
+    }
+
+    float d = 0.4f;
+    b2Polygon box = b2MakeSquare(0.5f * d);
+    b2BodyDef bodyDef = b2DefaultBodyDef();
+    bodyDef.type = b2_dynamicBody;
+    bodyDef.isAwake = false;
+
+    b2ShapeDef shapeDef = b2DefaultShapeDef();
+
+    int columns = 120;
+    int rows = 80;
+
+    for (int i = 0; i < columns; ++i) {
+      for (int j = 0; j < rows; ++j) {
+        bodyDef.position.x = i * d + 30.0f;
+        bodyDef.position.y = (j - rows / 2.0f) * d;
+        b2BodyId bodyId = b2CreateBody(world_id, &bodyDef);
+        b2CreatePolygonShape(bodyId, &shapeDef, &box);
+      }
+    }
+  };
+
+  const int physics_substep_count = 4;
+  const Uint64 NS_PER_FIXED_TICK = 1e9 / 60.0f;
+
+  SDL_Log("(GameThread) -- done init");
   // SignalGameThread(); // done init()
+  // WaitForMainThread();
+
   while (running) {
     static Uint64 game_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
+    // SDL_Log("GameThread - update()");
+
+    //
+    // input for this frame...
+    //
 
     bool rebuilding_dll = false;
 
-    const auto& new_evts = game_data.evts;
+    // pop all the events at once from a thread-safe buffer.
+    const auto new_evts = event_queue.dequeue();
+
+    // if (new_evts.size() > 0) {
+    //   const auto msg = std::format("GameThread - events size: {}", new_evts.size());
+    //   SDL_Log("%s", msg.c_str());
+    // }
+
     for (const SDL_Event& evt : new_evts) {
       if (evt.type == SDL_EVENT_KEY_DOWN) {
         const auto scancode = evt.key.scancode;
         const auto scancode_name = SDL_GetScancodeName(scancode);
         const auto down = evt.key.down;
         const auto repeat = evt.key.repeat;
-        // SDL_Log("(GameThread) KeyDown %s %i %i", scancode_name, down, repeat);
-
-        if (scancode == SDL_SCANCODE_KP_PLUS) {
-          game_data.counter++;
-        }
-        if (scancode == SDL_SCANCODE_KP_MINUS) {
-          game_data.counter--;
-        }
+        SDL_Log("(GameThread) KeyDown %s %i %i", scancode_name, down, repeat);
 
         if (scancode == SDL_SCANCODE_9)
           rebuilding_dll = true;
 
-        if (scancode == SDL_SCANCODE_KP_ENTER) {
-          if (game_code.is_valid) {
-            SDL_Log("want to update dll()");
+        if (scancode == SDL_SCANCODE_KP_PLUS) {
+          const auto e = game_data.r.create();
+          game_data.r.emplace<TransformComponent>(e);
 
-            game_code.game_update();
-
-            auto gt_str = std::format("(gamethread) {}", game_data.counter);
-            SDL_Log("%s", gt_str.c_str());
-          }
+          const auto msg = std::format("Creating entity... up to: {}", game_data.r.view<const TransformComponent>().size());
+          SDL_Log("%s", msg.c_str());
         }
       }
       if (evt.type == SDL_EVENT_KEY_UP) {
         // SDL_Log("(GameThread) KeyUp");
       }
     }
-    game_data.evts.clear();
 
-    // SDL_Log("(GameThread) Update()");
     const float dt = dt_ns * 1e-9;
-    game_data.dt += dt;
 
-    // thread-blocking rebuild
+    // run physics at fixed timesteps
+
+    static Uint64 accu = 0;
+    accu += dt_ns;
+    while (accu >= NS_PER_FIXED_TICK) {
+      accu -= NS_PER_FIXED_TICK;
+
+      // fixedupdate
+      b2World_Step(world_id, NS_PER_FIXED_TICK, physics_substep_count);
+    }
+
+    // update game...
+    //
+    if (game_code.is_valid)
+      game_code.game_update();
+
+    // thread-blocking rebuild dll
+    //
     if (rebuilding_dll) {
       auto build_script = "rebuild_dll.bat";
       auto base_path = SDL_GetBasePath();
@@ -396,14 +430,20 @@ GameThread()
         SDL_Log("Done...");
         sdl_unload_game_code(&game_code);
         game_code = sdl_load_game_code(src_dll, dst_dll);
-        // game_code.game_refresh(&game_data);
         game_code.game_refresh(&game_data);
       }
     }
 
-    SignalGameThread();
-    WaitForMainThread(); // wait until the data is copied
+    // Ding ding! frame done. UpdateRenderData
+    auto view = game_data.r.view<const TransformComponent>();
+    auto& wb = GetWriteBuffer();
+    wb.transforms.clear(); // could do something better than .clear()
+    const auto get_comp = [](const auto& tuple) -> TransformComponent { return std::get<1>(tuple); };
+    std::ranges::copy(view.each() | std::views::transform(get_comp), std::back_inserter(wb.transforms));
+    SwapBuffers();
   }
+
+  b2DestroyWorld(world_id);
 };
 
 // Vertex Formats
@@ -721,11 +761,25 @@ RenderThread()
   const SDL_GPUViewport small_viewport = { 160, 120, 320, 240, 0.1f, 1.0f };
   const SDL_Rect scissor_rect = { 320, 240, 320, 240 };
 
-  SignalRenderThread(); // done init()
+  SDL_Log("(RenderThread) -- done init");
+  // SignalRenderThread(); // done init()
+  // WaitForMainThread();
+
   while (running) {
     static Uint64 renderer_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
+
+    // note: this doubles the memory,
+    // because its copying the entire RenderData
+    const RenderData read_buffer = GetReadBuffer(); // copy
+    const auto& transforms = read_buffer.transforms;
+
+    // TODO: render the transforms...
+    // if (transforms.size() > 0) {
+    //   const auto msg = std::format("(RT) transforms: {}", transforms.size());
+    //   SDL_Log("%s", msg.c_str());
+    // }
 
     // SDL_Log("(RenderThread) Update()");
     {
@@ -753,13 +807,13 @@ RenderThread()
         std::vector color_targets = { col_info };
         auto* render_pass = SDL_BeginGPURenderPass(cmd_buf, color_targets.data(), color_targets.size(), NULL);
 
-        if (rend_data.use_small_viewport)
+        if (read_buffer.use_small_viewport)
           SDL_SetGPUViewport(render_pass, &small_viewport);
 
-        if (rend_data.use_scissor_viewport)
+        if (read_buffer.use_scissor_viewport)
           SDL_SetGPUScissor(render_pass, &scissor_rect);
 
-        SDL_BindGPUGraphicsPipeline(render_pass, rend_data.use_wireframe_mode ? line_pipeline : fill_pipeline);
+        SDL_BindGPUGraphicsPipeline(render_pass, read_buffer.use_wireframe_mode ? line_pipeline : fill_pipeline);
 
         const std::vector<SDL_GPUBufferBinding> bindings{ { .buffer = vertex_buffer, .offset = 0 } };
         SDL_BindGPUVertexBuffers(render_pass, 0, bindings.data(), bindings.size());
@@ -768,11 +822,11 @@ RenderThread()
         SDL_BindGPUIndexBuffer(render_pass, &idx_buffer_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
 
         // Clamp the counter
-        int counter = rend_data.cur_sampler_idx;
-        counter = counter < 0 ? samplers.size() - 1 : counter;
-        counter = counter % samplers.size();
+        // int counter = rend_data.cur_sampler_idx;
+        // counter = counter < 0 ? samplers.size() - 1 : counter;
+        // counter = counter % samplers.size();
 
-        auto& sampler = samplers[counter];
+        auto& sampler = samplers[0];
         const SDL_GPUTextureSamplerBinding tex_sampler_binding = { .texture = Texture, .sampler = sampler };
         SDL_BindGPUFragmentSamplers(render_pass, 0, &tex_sampler_binding, 1);
 
@@ -785,8 +839,6 @@ RenderThread()
       if (!submit)
         throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
     }
-
-    SignalRenderThread(); // done
   }
 
   // Cleanup
@@ -795,10 +847,26 @@ RenderThread()
   SDL_ReleaseGPUBuffer(device, vertex_buffer);
 };
 
+//
+// General approach
+//
+// write the events to a thread-safe input buffer.
+// share this buffer with the game-thread.
+//
+// Game-thread grabs all input & processes.
+// Update physics, gamelogic, etc,
+// the state is written to a game-state-buffer
+//
+// Render-Thread reads the most recent game-state and renders it.
+// It does not wait
+// for the game thread to finish the next frame,
+// it renders the latest available state.
+//
+
 int
 main(int argc, char* argv[])
 {
-  // setvbuf(stdout, nullptr, _IONBF, 0); // dont buffer
+  setvbuf(stdout, nullptr, _IONBF, 0); // dont buffer
 
 #if defined(SDL_PLATFORM_WIN32)
   SDL_Log("Hello, Windows!");
@@ -854,11 +922,6 @@ main(int argc, char* argv[])
   std::thread game_thread(GameThread);
   std::thread render_thread(RenderThread);
 
-  WaitForRenderThread(); // wait for it to init
-  // WaitForGameThread();   // wait for it to init
-
-  // SDL_AddEventWatch(SDL_EventFilter filter, void *userdata)
-
   while (running) {
     static Uint64 past = SDL_GetTicksNS();
     const Uint64 now = SDL_GetTicksNS();
@@ -875,53 +938,8 @@ main(int argc, char* argv[])
       evts.push_back(e);
     }
 
-    // SDL_Log("(MainThread) waiting for (GameThread)...");
-    // SDL_Log("(MainThread) waiting for (RenderThread)...");
-    WaitForGameThread();
-    WaitForRenderThread();
-
-    // Once both threads finished their work,
-    // RenderThread copies the GameThread data in to it's internal structures.
-    // The 2 threads are working on their own, and sharing at the end of the frame.
-    //
-    // How to avoid copying data between threads?
-    //
-    // 1. Double buffering. Maintain two copies of the data,
-    // one for game thread, one for render thread.
-    // The game thread writes to one buffer while the render thread reads from the other.
-    // After each frame, the buffers are swapped.
-    //
-    // 2. Read-Write Locks.
-    // A read-write lock allows multiple threads to read data
-    // simultaneously but ensures exclusive access for writing.
-    // This can be useful if the render thread only needs to read data.
-    //
-    {
-      std::lock_guard<std::mutex> lock(mtx);
-
-      // MainThread to GameThread
-      game_data.evts = evts;
-
-      // GameThread to RenderThread
-      // rend_data.counter = game_data.counter;
-      // rend_data.dt = game_data.dt;
-      // rend_data.use_wireframe_mode =
-
-      rend_data.use_wireframe_mode = false;
-      rend_data.use_scissor_viewport = false;
-      rend_data.use_small_viewport = false;
-      // if (game_data.counter == 1)
-      //   rend_data.use_wireframe_mode = true;
-      // if (game_data.counter == 2)
-      //   rend_data.use_scissor_viewport = true;
-      // if (game_data.counter == 3)
-      //   rend_data.use_small_viewport = true;
-
-      rend_data.cur_sampler_idx = game_data.counter;
-    }
-
-    // SDL_Log("(MainThread) Done");
-    SignalMainThread();
+    // push all the events at once in to a thread-safe vector.
+    event_queue.enqueue({ evts.begin(), evts.end() });
   }
 
   game_thread.join();
@@ -933,37 +951,3 @@ main(int argc, char* argv[])
 
   return 0;
 };
-
-// Note: can use std::async for parallelisable tasks...
-// e.g.
-// auto player_tasks = std::async(std::launch::async,
-//   [](){
-//       input->QueryPlayerInput();
-//       player->UpdatePlayerCharacter();
-//   });
-// player_tasks.wait();
-
-// Physics...
-// accu += dt_ns;
-// while (accu >= NS_PER_FIXED_TICK) {
-//   accu -= NS_PER_FIXED_TICK;
-//   // fixedupdate
-// }
-
-// particles is standalone AND we can update each particle on its own, so we can combine async with parallel for
-// auto particles_task = std::async(std::launch::async,
-//     [](){
-//         std::for_each(std::execution::par,
-//             ParticleSystems.begin(),
-//             ParticleSystems.end(),
-//             [](Particle* Part){
-//                  Part->UpdateParticles();
-
-//                 if(Part->IsDead)
-//                 {
-//                     deletion_queue.push(Part);
-//                 }
-//             });
-//     });
-
-// };

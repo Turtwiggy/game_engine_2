@@ -9,7 +9,7 @@ set MSYS2_PATH=C:\Software\msys64
 
 :: Run configuration and build in single shell session
 echo Running configuration command...
-call "%MSYS2_PATH%\msys2_shell.cmd" -defterm -where %PROJECT% -no-start -ucrt64 -shell bash -c '%BUILD_COMMAND% || exit 1'
+call "%MSYS2_PATH%\msys2_shell.cmd" -defterm -where %PROJECT% -no-start -ucrt64 -shell bash -c '%BUILD_COMMAND% || exit 1' > nul
 
 echo Done building...
 
@@ -22,9 +22,9 @@ if errorlevel 1 (
 :: Copy DLL - adjust paths as needed
 set COPY_CMD=xcopy /Y "%DLL_SRC%" "%DLL_DST%"
 
-echo DLL_SRC %DLL_SRC%
-echo DLL_DST %DLL_DST%
-echo %COPY_CMD%
+:: echo DLL_SRC %DLL_SRC%
+:: echo DLL_DST %DLL_DST%
+:: echo %COPY_CMD%
 
 if exist %DLL_SRC% (
   echo F | %COPY_CMD% > nul

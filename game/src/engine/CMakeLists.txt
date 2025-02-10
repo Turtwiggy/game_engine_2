@@ -21,6 +21,9 @@ include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-gcc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
 find_packages()
 
+set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src)
+set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
+
 # Add source files
 # include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
 # include(${CMAKE_SOURCE_DIR}/cmake/optick.cmake)
@@ -28,6 +31,7 @@ file(GLOB_RECURSE SRC_FILES
 
   # ${IMGUI_SOURCE}
   # ${OPTICK_SOURCE}
+  ${CMAKE_SOURCE_DIR}/game/src/dll_boundary/common.hpp
   ${CMAKE_SOURCE_DIR}/game/src/engine/*.cpp
 )
 
@@ -43,19 +47,20 @@ else()
 endif()
 
 link_libs(game)
+target_link_libraries(game PRIVATE ${BOX2D_LIBRARY})
 
 add_dependencies(game GameDLL) # build first
 
 # Copy the game.dll
 if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
-  # message("copying game.dll needs copying...")
-  # add_custom_target(do_always ALL
-  # COMMAND ${CMAKE_COMMAND} -E remove
-  # "$<TARGET_FILE_DIR:game>/$<TARGET_FILE_NAME:GameDLL>"
-  # COMMAND ${CMAKE_COMMAND} -E copy_if_different
-  # "$<TARGET_FILE:GameDLL>"
-  # "$<TARGET_FILE_DIR:game>"
-  # )
+  message("copying game.dll needs copying...")
+  add_custom_target(do_always ALL
+    COMMAND ${CMAKE_COMMAND} -E remove
+    "$<TARGET_FILE_DIR:game>/$<TARGET_FILE_NAME:GameDLL>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<TARGET_FILE:GameDLL>"
+    "$<TARGET_FILE_DIR:game>"
+  )
 endif()
 
 # Link steam api
@@ -81,10 +86,11 @@ target_include_directories(game PRIVATE
   # ${IMGUI_INCLUDES}
   ${Stb_INCLUDE_DIR}
   ${VCPKG_INCLUDES}
-  ${OPTICK_INCLUDES}
+  ${CMAKE_SOURCE_DIR}/thirdparty/box2d/include
   ${CMAKE_SOURCE_DIR}/thirdparty/entt/single_include
   ${CMAKE_SOURCE_DIR}/thirdparty/sdk/public
   ${CMAKE_SOURCE_DIR}/game/src/engine
+  ${CMAKE_SOURCE_DIR}/game/src/dll_boundary
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")
