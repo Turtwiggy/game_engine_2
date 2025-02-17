@@ -5,13 +5,12 @@
 // #include <backends/imgui_impl_sdl3.h>
 // #include <backends/imgui_impl_vulkan.h>
 
-#include "box2d/id.h"
 #include "common.hpp"
 #include "sdl_exception.hpp"
 #include "sdl_shader.hpp"
 #include "sdl_surface.hpp"
 #include "threadsafe_queue.hpp"
-#include <cstdint>
+#include <SDL3/SDL_timer.h>
 using namespace game2d;
 
 #include <SDL3/SDL.h>
@@ -23,7 +22,13 @@ using namespace game2d;
 #include <SDL3/SDL_loadso.h>
 #include <SDL3/SDL_stdinc.h>
 #include <box2d/box2d.h>
+#include <box2d/id.h>
 #include <entt/entt.hpp>
+
+#if !defined(TRACY_ENABLE)
+#define TRACY_ENABLE
+#endif
+#include <tracy/Tracy.hpp>
 
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_sdlgpu3.h"
@@ -32,6 +37,7 @@ using namespace game2d;
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <ranges>
 #include <stdexcept>
@@ -267,8 +273,12 @@ GameThread()
   SDL_Log("%s", info_str.c_str());
 
 #ifdef _WIN32
-  auto src_dll = "libGameDLL.dll";
-  auto dst_dll = "libGameDLL-locked.dll"; // when loaded, system processor locks it
+  // #ifdef (mingw)
+  // auto src_dll = "libGameDLL.dll";
+  // auto dst_dll = "libGameDLL-locked.dll"; // when loaded, system processor locks it
+  auto src_dll = "GameDLL.dll";
+  auto dst_dll = "GameDLL-locked.dll"; // when loaded, system processor locks it
+
 // #elif __linux__
 //   "libGameDLL.so";
 // #elif __APPLE__
@@ -294,9 +304,9 @@ GameThread()
   world_def.gravity = gravity;
 
   // threads used (main, game, render)
-  const int used_threads = 3;
-  const int max_thread_count = std::max(1, logical_cpu_cores - used_threads);
-  SDL_Log("%s", std::format("Giving box2d {} threads", max_thread_count).c_str());
+  // const int used_threads = 3;
+  // const int max_thread_count = std::max(1, logical_cpu_cores - used_threads);
+  // SDL_Log("%s", std::format("Giving box2d {} threads", max_thread_count).c_str());
 
   // #define MAX_TASKS 128
   // #define THREAD_LIMIT 32
@@ -313,8 +323,8 @@ GameThread()
 
       b2BodyDef bodyDef = b2DefaultBodyDef();
       bodyDef.type = b2_dynamicBody;
-      bodyDef.position = (b2Vec2){ -20.0f, 0.0f };
-      bodyDef.linearVelocity = (b2Vec2){ 40.0f, 0.0f };
+      bodyDef.position = b2Vec2{ -20.0f, 0.0f };
+      bodyDef.linearVelocity = b2Vec2{ 40.0f, 0.0f };
       b2BodyId bodyId = b2CreateBody(world_id, &bodyDef);
 
       b2ShapeDef shapeDef = b2DefaultShapeDef();
@@ -350,11 +360,13 @@ GameThread()
   // SignalGameThread(); // done init()
   // WaitForMainThread();
 
+  tracy::SetThreadName("GameThread");
   while (running) {
     static Uint64 game_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
     // SDL_Log("GameThread - update()");
+    ZoneScopedN("GameThread");
 
     //
     // input for this frame...
@@ -461,6 +473,8 @@ GameThread()
     const auto get_comp = [](const auto& tuple) -> TransformComponent { return std::get<1>(tuple); };
     std::ranges::copy(view.each() | std::views::transform(get_comp), std::back_inserter(wb.transforms));
     SwapBuffers();
+
+    FrameMark; // frame done
   }
 
   b2DestroyWorld(world_id);
@@ -535,7 +549,7 @@ Matrix4x4
 Matrix4x4_CreateOrthographicOffCenter(float left, float right, float bottom, float top, float zNearPlane, float zFarPlane)
 {
   // clang-format off
-  return (Matrix4x4) {
+  return Matrix4x4{
 		2.0f / (right - left), 0, 0, 0,
 		0, 2.0f / (top - bottom), 0, 0,
 		0, 0, 1.0f / (zNearPlane - zFarPlane), 0,
@@ -794,7 +808,7 @@ RenderThread()
   SDL_SetGPUTextureName(device, Texture, "RavioliTexture");
 
   // Start texture transfer buffer
-  const auto texture_transfer_buffer_create_info = (SDL_GPUTransferBufferCreateInfo){
+  const auto texture_transfer_buffer_create_info = SDL_GPUTransferBufferCreateInfo{
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
     .size = (Uint32)(image_data->w * image_data->h * 4),
   };
@@ -855,7 +869,10 @@ RenderThread()
   // SignalRenderThread(); // done init()
   // WaitForMainThread();
 
+  tracy::SetThreadName("RenderThread");
   while (running) {
+    ZoneScopedN("RenderThread");
+
     static Uint64 renderer_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
@@ -893,6 +910,7 @@ RenderThread()
       SDL_WaitAndAcquireGPUSwapchainTexture(cmd_buf, window, &swapchain_texture, NULL, NULL);
       if (swapchain_texture == NULL) {
         SDL_Log("Window is minimized...");
+        FrameMark; // frame done
         return;
       }
 
@@ -902,7 +920,7 @@ RenderThread()
         // static float vCoords[4] = { 0.0f, 0.0f, 0.5f, 0.5f };
 
         SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, sprite_data_transfer_buffer, true);
-        const uint32_t max = transforms.size();
+        const uint32_t max = (uint32_t)transforms.size();
         for (uint32_t i = 0; i < SPRITE_COUNT; i++) {
 
           if (i < max) {
@@ -952,7 +970,7 @@ RenderThread()
         // Render sprites.
         SDL_GPUColorTargetInfo col_info = {
           .texture = swapchain_texture,
-          .clear_color = (SDL_FColor){ 0.3f, 0.4f, 0.5f, 1.0f },
+          .clear_color = SDL_FColor{ 0.3f, 0.4f, 0.5f, 1.0f },
           .load_op = SDL_GPU_LOADOP_CLEAR,
           .store_op = SDL_GPU_STOREOP_STORE,
         };
@@ -991,6 +1009,8 @@ RenderThread()
       if (!submit)
         throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
     }
+
+    FrameMark; // frame done
   }
 
   // Cleanup
@@ -1102,6 +1122,7 @@ main(int argc, char* argv[])
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, past);
     const Uint64 start_s = SDL_GetPerformanceCounter();
+    ZoneScopedN("MainThread");
 
     // SDL_PollEvent: MainThread
     static SDL_Event e;
@@ -1125,6 +1146,8 @@ main(int argc, char* argv[])
     float x = 0, y = 0;
     SDL_GetMouseState(&x, &y);
     mouse_pos.store({ x, y });
+
+    FrameMark; // frame done
   }
 
   game_thread.join();

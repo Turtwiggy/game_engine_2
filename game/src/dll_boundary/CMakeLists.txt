@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10.0)
+cmake_minimum_required(VERSION 3.30.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -21,8 +21,8 @@ include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-gcc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
 find_packages()
 
-set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src)
-set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
+# set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src)
+# set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
 
 # Add source files.
 file(GLOB_RECURSE SRC_FILES
@@ -36,7 +36,8 @@ add_library(GameDLL SHARED
 
 # Link Libraries
 link_libs(GameDLL)
-target_link_libraries(GameDLL PRIVATE ${BOX2D_LIBRARY})
+
+# target_link_libraries(GameDLL PRIVATE ${BOX2D_LIBRARY})
 
 # Define the export macro for the .dll
 target_compile_definitions(GameDLL PRIVATE

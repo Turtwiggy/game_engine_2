@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.10.0)
+cmake_minimum_required(VERSION 3.30.0)
+include(FetchContent)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -20,9 +22,16 @@ message("index CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
 include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-gcc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
 find_packages()
+find_package(Tracy CONFIG REQUIRED)
 
-set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src)
-set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
+FetchContent_Declare(
+  tracy
+  GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+  GIT_TAG v0.11.1
+  GIT_SHALLOW TRUE
+  GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(tracy)
 
 # Add source files
 include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
@@ -46,9 +55,18 @@ else()
 endif()
 
 link_libs(game)
+target_link_libraries(game PUBLIC TracyClient)
+
+# Build Box2D
+# set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
+add_subdirectory(${CMAKE_SOURCE_DIR}/thirdparty/box2d ${CMAKE_SOURCE_DIR}/build/box2d)
+add_dependencies(game box2d)
+set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/build/box2d/src/Debug)
+set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/box2dd.lib)
 target_link_libraries(game PRIVATE ${BOX2D_LIBRARY})
 
-add_dependencies(game GameDLL) # build first
+# Build GameDLL
+add_dependencies(game GameDLL)
 
 # Copy the game.dll
 if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
@@ -158,6 +176,7 @@ if(${CMAKE_BUILD_TYPE} MATCHES Debug)
     message("creating symlink... (windows)")
     file(TO_NATIVE_PATH "${src}" _srcDir)
     file(TO_NATIVE_PATH "${dst}" _dstDir)
+    message("dst: ${_dstDir}")
 
     if(NOT EXISTS ${_dstDir})
       # https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mklink
