@@ -34,7 +34,6 @@ game_update()
 
   auto& r = your_ref_to_data->r;
 
-  auto view = r.view<TransformComponent>();
   // const auto info = std::format("(GameEngine) Transforms: {}", view.size());
   // SDL_Log("%s", info.c_str());
 };

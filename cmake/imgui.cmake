@@ -2,7 +2,7 @@ message("imgui: CMAKE_CURRENT_LIST_DIR: ${CMAKE_CURRENT_LIST_DIR}")
 
 set(IMGUI_SOURCE
   ${CMAKE_CURRENT_LIST_DIR}/../thirdparty/imgui/backends/imgui_impl_sdl3.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/../thirdparty/imgui/backends/imgui_impl_vulkan.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/../thirdparty/imgui/backends/imgui_impl_sdlgpu3.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../thirdparty/imgui/imgui.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../thirdparty/imgui/imgui_draw.cpp
   ${CMAKE_CURRENT_LIST_DIR}/../thirdparty/imgui/imgui_tables.cpp

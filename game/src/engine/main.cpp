@@ -11,6 +11,7 @@
 #include "sdl_shader.hpp"
 #include "sdl_surface.hpp"
 #include "threadsafe_queue.hpp"
+#include <cstdint>
 using namespace game2d;
 
 #include <SDL3/SDL.h>
@@ -24,12 +25,15 @@ using namespace game2d;
 #include <box2d/box2d.h>
 #include <entt/entt.hpp>
 
+#include "backends/imgui_impl_sdl3.h"
+#include "backends/imgui_impl_sdlgpu3.h"
+#include <imgui.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <format>
 #include <ranges>
-#include <span>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -237,6 +241,7 @@ sdl_unload_game_code(sdl_game_code* game_code)
 entt::registry game_r;
 GameData game_data = {game_r};
 RenderData rend_data[2];
+std::atomic<vec2> mouse_pos;
 std::atomic<int> current_read_buffer = 0;
 RenderData& GetWriteBuffer(){return rend_data[1 - current_read_buffer.load()];};
 const RenderData GetReadBuffer(){return rend_data[current_read_buffer.load()];}; // take a copy
@@ -383,16 +388,18 @@ GameThread()
           const auto msg = std::format("Creating entity... up to: {}", game_data.r.view<const TransformComponent>().size());
           SDL_Log("%s", msg.c_str());
         }
+
+        if (scancode == SDL_SCANCODE_KP_MINUS) {
+          const auto view = game_data.r.view<TransformComponent>();
+          game_data.r.destroy(view.begin(), view.end());
+        }
       }
       if (evt.type == SDL_EVENT_KEY_UP) {
         // SDL_Log("(GameThread) KeyUp");
       }
     }
 
-    const float dt = dt_ns * 1e-9;
-
     // run physics at fixed timesteps
-
     static Uint64 accu = 0;
     accu += dt_ns;
     while (accu >= NS_PER_FIXED_TICK) {
@@ -402,8 +409,21 @@ GameThread()
       b2World_Step(world_id, NS_PER_FIXED_TICK, physics_substep_count);
     }
 
+    // const float dt = dt_ns * 1e-9;
+
+    auto mp = mouse_pos.load();
+    // SDL_Log("%f %f", mp.x, mp.y);
+
+    // HACK: move one transform with mouse position
+    {
+      auto view = game_data.r.view<TransformComponent>();
+      for (const auto& [e, t_c] : view.each()) {
+        t_c.pos = vec3{ mp.x, mp.y, 0 };
+        break;
+      }
+    }
+
     // update game...
-    //
     if (game_code.is_valid)
       game_code.game_update();
 
@@ -448,6 +468,8 @@ GameThread()
 
 // Vertex Formats
 
+/*
+
 typedef struct PositionVertex
 {
   float x, y, z;
@@ -470,6 +492,58 @@ typedef struct Index
   Uint16 i;
 } Index;
 
+// Rect
+const std::vector<PositionTextureVertex> vertex_data{
+  // clang-format off
+  // xyz, uv
+  // { -0.5, -0.5, 0,      0.0f, 1.0f },   //
+  // { 0.5, -0.5, 0,       1.0f, 1.0f },   //
+  // { 0.5, 0.5, 0,        1.0f, 1.0f },   //
+  // { -0.5, 0.5, 0,       0.0f, 1.0f },   //
+  {-0.5, 0.5, 0, 0, 0},
+  {0.5, 0.5, 0, 1, 0},
+  {0.5, -0.5, 0, 1, 1},
+  {-0.5, -0.5, 0, 0, 1} ,
+  // clang-format on
+};
+
+const std::vector<Index> index_data{
+  { 0 }, { 1 }, { 2 }, //
+  { 0 }, { 2 }, { 3 },
+};
+
+*/
+
+typedef struct SpriteInstance
+{
+  float x, y, z;
+  float rotation;
+  float w, h, padding_a, padding_b;
+  float tex_u, tex_v, tex_w, tex_h;
+  float r, g, b, a;
+} SpriteInstance;
+
+typedef struct Matrix4x4
+{
+  float m11, m12, m13, m14;
+  float m21, m22, m23, m24;
+  float m31, m32, m33, m34;
+  float m41, m42, m43, m44;
+} Matrix4x4;
+
+Matrix4x4
+Matrix4x4_CreateOrthographicOffCenter(float left, float right, float bottom, float top, float zNearPlane, float zFarPlane)
+{
+  // clang-format off
+  return (Matrix4x4) {
+		2.0f / (right - left), 0, 0, 0,
+		0, 2.0f / (top - bottom), 0, 0,
+		0, 0, 1.0f / (zNearPlane - zFarPlane), 0,
+		(left + right) / (left - right), (top + bottom) / (bottom - top), zNearPlane / (zNearPlane - zFarPlane), 1
+	};
+  // clang-format on
+}
+
 void
 RenderThread()
 {
@@ -478,73 +552,86 @@ RenderThread()
 
   game2d::InitializeAssetLoader();
 
-  auto vert_shader = game2d::LoadShader(device, "TexturedQuad.vert", 0, 0, 0, 0);
+  const uint32_t SPRITE_COUNT = 8192;
+  const Matrix4x4 cameraMatrix = Matrix4x4_CreateOrthographicOffCenter(0, 1280, 720, 0, 0, -1);
+
+  SDL_GPUPresentMode present_mode = SDL_GPU_PRESENTMODE_VSYNC;
+  if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_IMMEDIATE))
+    present_mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+  else if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_MAILBOX))
+    present_mode = SDL_GPU_PRESENTMODE_MAILBOX;
+  SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present_mode);
+
+  auto vert_shader = game2d::LoadShader(device, "PullSpriteBatch.vert", 0, 1, 1, 0);
   if (vert_shader == NULL) {
     SDL_Log("Failed to create vert shader");
     exit(SDL_APP_FAILURE); // explode
   };
 
-  auto frag_shader = game2d::LoadShader(device, "TexturedQuad.frag", 1, 0, 0, 0);
+  auto frag_shader = game2d::LoadShader(device, "TexturedQuadColor.frag", 1, 0, 0, 0);
   if (frag_shader == NULL) {
     SDL_Log("Failed to create frag shader");
     exit(SDL_APP_FAILURE); // explode
   };
 
-  // Load an image.
-  // SDL_Surface* image_data = LoadBMP("ravioli.bmp", 4);
-  SDL_Surface* image_data = LoadIMG("a_star.png");
-  if (!image_data) {
-    throw SDLException("Failed to load image.");
-    exit(SDL_APP_FAILURE); // explode
-  }
-
   const char* SamplerNames[] = {
     "PointClamp", "PointWrap", "LinearClamp", "LinearWrap", "AnisotropicClamp", "AnisotropicWrap",
   };
 
-  using VertexFinal = PositionTextureVertex;
+  // using VertexFinal = PositionTextureVertex;
 
   const std::vector<SDL_GPUColorTargetDescription> color_target_desc{
-    { .format = SDL_GetGPUSwapchainTextureFormat(device, window) },
-  };
-
-  const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
     {
-      .slot = 0,
-      .pitch = sizeof(VertexFinal),
-      .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
-      .instance_step_rate = 0,
+      .format = SDL_GetGPUSwapchainTextureFormat(device, window),
+      .blend_state = {
+          .src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+          .dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+          .color_blend_op = SDL_GPU_BLENDOP_ADD,
+          .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+          .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+          .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
+          .enable_blend = true,
+      }
     },
   };
+
+  // const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
+  //   {
+  //     .slot = 0,
+  //     .pitch = sizeof(VertexFinal),
+  //     .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+  //     .instance_step_rate = 0,
+  //   },
+  // };
 
   // Setup to match the vertex shader layout
-  const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
-    {
-      // xyz is 3 floats
-      .location = 0,
-      .buffer_slot = 0,
-      .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-      .offset = 0,
-    },
-    {
-      // uv is a 2 floats
-      .location = 1,
-      .buffer_slot = 0,
-      .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
-      .offset = offsetof(VertexFinal, u),
-    },
-  };
+  // const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
+  //   {
+  //     // xyz is 3 floats
+  //     .location = 0,
+  //     .buffer_slot = 0,
+  //     .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+  //     .offset = 0,
+  //   },
+  //   {
+  //     // uv is a 2 floats
+  //     .location = 1,
+  //     .buffer_slot = 0,
+  //     .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+  //     .offset = offsetof(VertexFinal, u),
+  //   },
+  // };
 
   // Create the pipelines.
   SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
     .vertex_shader = vert_shader,
     .fragment_shader = frag_shader,
-    .vertex_input_state = (SDL_GPUVertexInputState){
-      .vertex_buffer_descriptions = vertex_buffer_descriptions.data(),
-      .num_vertex_buffers = (Uint32)vertex_buffer_descriptions.size(),
-  	  .vertex_attributes = vertex_attributes.data(),
-			.num_vertex_attributes = (Uint32)vertex_attributes.size(),
-    },
+    // .vertex_input_state = (SDL_GPUVertexInputState){
+    //   .vertex_buffer_descriptions = vertex_buffer_descriptions.data(),
+    //   .num_vertex_buffers = (Uint32)vertex_buffer_descriptions.size(),
+  	//   .vertex_attributes = vertex_attributes.data(),
+		// 	.num_vertex_attributes = (Uint32)vertex_attributes.size(),
+    // },
     .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
     .target_info = {
       .color_target_descriptions = color_target_desc.data(),
@@ -630,26 +717,7 @@ RenderThread()
     SDL_CreateGPUSampler(device, &s3), SDL_CreateGPUSampler(device, &s4), SDL_CreateGPUSampler(device, &s5),
   };
 
-  // Rect
-  const std::vector<PositionTextureVertex> vertex_data{
-    // clang-format off
-    // xyz, uv
-    // { -0.5, -0.5, 0,      0.0f, 1.0f },   //
-    // { 0.5, -0.5, 0,       1.0f, 1.0f },   //
-    // { 0.5, 0.5, 0,        1.0f, 1.0f },   //
-    // { -0.5, 0.5, 0,       0.0f, 1.0f },   //
-    {-0.5, 0.5, 0, 0, 0},
-    {0.5, 0.5, 0, 1, 0},
-    {0.5, -0.5, 0, 1, 1},
-    {-0.5, -0.5, 0, 0, 1} ,
-    // clang-format on
-  };
-
-  const std::vector<Index> index_data{
-    { 0 }, { 1 }, { 2 }, //
-    { 0 }, { 2 }, { 3 },
-  };
-
+  /*
   const Uint32 vertex_data_mem_size = sizeof(VertexFinal) * vertex_data.size();
   const Uint32 index_data_mem_size = sizeof(Index) * index_data.size();
 
@@ -673,24 +741,7 @@ RenderThread()
     throw SDLException("Failed to create GpuBuffer");
   SDL_SetGPUBufferName(device, index_buffer, "IndexBuffer");
 
-  // Create a texture
-  SDL_GPUTextureCreateInfo texture_create_info = {
-    .type = SDL_GPU_TEXTURETYPE_2D,
-    .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-    .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
-    .width = static_cast<Uint32>(image_data->w),
-    .height = static_cast<Uint32>(image_data->h),
-    .layer_count_or_depth = 1,
-    .num_levels = 1,
-  };
-  auto* Texture = SDL_CreateGPUTexture(device, &texture_create_info);
-  if (!Texture) {
-    throw SDLException("Failed to CreateGPUTexture()");
-    exit(SDL_APP_FAILURE); // crash
-  }
-  SDL_SetGPUTextureName(device, Texture, "RavioliTexture");
-
-  //
+//
   // To get data in to the vertex buffer, we have to use a transfer buffer.
   //
   const auto transfer_buffer_info = (SDL_GPUTransferBufferCreateInfo){
@@ -715,13 +766,39 @@ RenderThread()
 
   SDL_UnmapGPUTransferBuffer(device, transfer_buffer); // note: need to unmap before aquire gpu command
 
-  //
+  */
+
+  // Load an image.
+  // SDL_Surface* image_data = LoadBMP("ravioli.bmp", 4);
+  SDL_Surface* image_data = LoadIMG("a_star.png");
+  if (!image_data) {
+    throw SDLException("Failed to load image.");
+    exit(SDL_APP_FAILURE); // explode
+  }
+
+  // Create a texture
+  SDL_GPUTextureCreateInfo texture_create_info = {
+    .type = SDL_GPU_TEXTURETYPE_2D,
+    .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+    .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+    .width = static_cast<Uint32>(image_data->w),
+    .height = static_cast<Uint32>(image_data->h),
+    .layer_count_or_depth = 1,
+    .num_levels = 1,
+  };
+  auto* Texture = SDL_CreateGPUTexture(device, &texture_create_info);
+  if (!Texture) {
+    throw SDLException("Failed to CreateGPUTexture()");
+    exit(SDL_APP_FAILURE); // crash
+  }
+  SDL_SetGPUTextureName(device, Texture, "RavioliTexture");
+
   // Start texture transfer buffer
-  //
   const auto texture_transfer_buffer_create_info = (SDL_GPUTransferBufferCreateInfo){
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
     .size = (Uint32)(image_data->w * image_data->h * 4),
   };
+
   // Map the buffer in to cpu memory
   auto* texture_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &texture_transfer_buffer_create_info);
   if (!texture_transfer_buffer)
@@ -732,21 +809,34 @@ RenderThread()
   SDL_memcpy(texture_ptr, image_data->pixels, image_data->w * image_data->h * 4);
   SDL_UnmapGPUTransferBuffer(device, texture_transfer_buffer);
 
-  //
-  // Upload the transfer data to the vertex and index buffer
-  //
+  const auto sprite_data_transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
+    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+    .size = SPRITE_COUNT * sizeof(SpriteInstance),
+  };
+  auto* sprite_data_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &sprite_data_transfer_buffer_info);
+  if (!sprite_data_transfer_buffer)
+    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
 
+  const auto sprite_data_buffer_info = SDL_GPUBufferCreateInfo{
+    .usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+    .size = SPRITE_COUNT * sizeof(SpriteInstance),
+  };
+  auto* sprite_data_buffer = SDL_CreateGPUBuffer(device, &sprite_data_buffer_info);
+  if (!sprite_data_buffer)
+    throw SDLException("Unable to SDL_CreateGPUBuffer()");
+
+  // Copy data
   auto* upload_cmd_buf = SDL_AcquireGPUCommandBuffer(device);
   auto* copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
 
-  const auto v_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
-  const auto v_buffer_region = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = vertex_data_mem_size };
-  SDL_UploadToGPUBuffer(copy_pass, &v_buffer_location, &v_buffer_region, false);
+  // const auto v_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
+  // const auto v_buffer_region = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = vertex_data_mem_size };
+  // SDL_UploadToGPUBuffer(copy_pass, &v_buffer_location, &v_buffer_region, false);
 
-  auto offset = vertex_data_mem_size;
-  const auto i_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = offset };
-  const auto i_buffer_region = SDL_GPUBufferRegion{ .buffer = index_buffer, .offset = 0, .size = index_data_mem_size };
-  SDL_UploadToGPUBuffer(copy_pass, &i_buffer_location, &i_buffer_region, false);
+  // auto offset = vertex_data_mem_size;
+  // const auto i_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = offset };
+  // const auto i_buffer_region = SDL_GPUBufferRegion{ .buffer = index_buffer, .offset = 0, .size = index_data_mem_size };
+  // SDL_UploadToGPUBuffer(copy_pass, &i_buffer_location, &i_buffer_region, false);
 
   const auto ti = SDL_GPUTextureTransferInfo{ .transfer_buffer = texture_transfer_buffer, .offset = 0 /* zero out */ };
   const auto tr = SDL_GPUTextureRegion{ .texture = Texture, .w = (Uint32)image_data->w, .h = (Uint32)image_data->h, .d = 1 };
@@ -755,7 +845,7 @@ RenderThread()
   SDL_EndGPUCopyPass(copy_pass);
   if (!SDL_SubmitGPUCommandBuffer(upload_cmd_buf))
     throw SDLException("Unable to SDL_SubmitGPUCommandBuffer()");
-  SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
+  // SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
   SDL_ReleaseGPUTransferBuffer(device, texture_transfer_buffer);
 
   const SDL_GPUViewport small_viewport = { 160, 120, 320, 240, 0.1f, 1.0f };
@@ -770,6 +860,12 @@ RenderThread()
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
 
+    // Start the Dear ImGui frame
+    ImGui_ImplSDLGPU3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    ImGui::ShowDemoWindow(NULL);
+
     // note: this doubles the memory,
     // because its copying the entire RenderData
     const RenderData read_buffer = GetReadBuffer(); // copy
@@ -783,6 +879,9 @@ RenderThread()
 
     // SDL_Log("(RenderThread) Update()");
     {
+      ImGui::Render();
+      ImDrawData* draw_data = ImGui::GetDrawData();
+
       SDL_GPUCommandBuffer* cmd_buf = SDL_AcquireGPUCommandBuffer(device);
       if (cmd_buf == NULL) {
         throw SDLException("Could not aquire GPU command buffer");
@@ -798,6 +897,59 @@ RenderThread()
       }
 
       if (swapchain_texture) {
+
+        // static float uCoords[4] = { 0.0f, 0.5f, 0.0f, 0.5f };
+        // static float vCoords[4] = { 0.0f, 0.0f, 0.5f, 0.5f };
+
+        SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, sprite_data_transfer_buffer, true);
+        const uint32_t max = transforms.size();
+        for (uint32_t i = 0; i < SPRITE_COUNT; i++) {
+
+          if (i < max) {
+            data_ptr[i].x = transforms[i].pos.x;
+            data_ptr[i].y = transforms[i].pos.y;
+            data_ptr[i].z = transforms[i].pos.z;
+            data_ptr[i].rotation = 0;
+            data_ptr[i].w = 32;
+            data_ptr[i].h = 32;
+          } else {
+            data_ptr[i].w = 0;
+            data_ptr[i].h = 0;
+          }
+
+          data_ptr[i].padding_a = 0;
+          data_ptr[i].padding_b = 0;
+          data_ptr[i].tex_u = 0.0f;
+          data_ptr[i].tex_v = 0.0f;
+          data_ptr[i].tex_w = 1.0f;
+          data_ptr[i].tex_h = 1.0f;
+          data_ptr[i].r = 1.0f;
+          data_ptr[i].g = 1.0f;
+          data_ptr[i].b = 1.0f;
+          data_ptr[i].a = 1.0f;
+        }
+        SDL_UnmapGPUTransferBuffer(device, sprite_data_transfer_buffer);
+
+        // Upload instance data.
+        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buf);
+        {
+          const auto transfer_buffer_loc = SDL_GPUTransferBufferLocation{
+            .transfer_buffer = sprite_data_transfer_buffer,
+            .offset = 0,
+          };
+          const auto gpu_buffer_region_loc = SDL_GPUBufferRegion{
+            .buffer = sprite_data_buffer,
+            .offset = 0,
+            .size = SPRITE_COUNT * sizeof(SpriteInstance),
+          };
+          SDL_UploadToGPUBuffer(copy_pass, &transfer_buffer_loc, &gpu_buffer_region_loc, true);
+        }
+        SDL_EndGPUCopyPass(copy_pass);
+
+        // This is mandatory: call Imgui_ImplSDLGPU3_PrepareDrawData() to upload the vertex/index buffer!
+        Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd_buf);
+
+        // Render sprites.
         SDL_GPUColorTargetInfo col_info = {
           .texture = swapchain_texture,
           .clear_color = (SDL_FColor){ 0.3f, 0.4f, 0.5f, 1.0f },
@@ -809,28 +961,28 @@ RenderThread()
 
         if (read_buffer.use_small_viewport)
           SDL_SetGPUViewport(render_pass, &small_viewport);
-
         if (read_buffer.use_scissor_viewport)
           SDL_SetGPUScissor(render_pass, &scissor_rect);
 
         SDL_BindGPUGraphicsPipeline(render_pass, read_buffer.use_wireframe_mode ? line_pipeline : fill_pipeline);
+        SDL_BindGPUVertexStorageBuffers(render_pass, 0, &sprite_data_buffer, 1);
 
-        const std::vector<SDL_GPUBufferBinding> bindings{ { .buffer = vertex_buffer, .offset = 0 } };
-        SDL_BindGPUVertexBuffers(render_pass, 0, bindings.data(), bindings.size());
+        // const std::vector<SDL_GPUBufferBinding> bindings{ { .buffer = vertex_buffer, .offset = 0 } };
+        // SDL_BindGPUVertexBuffers(render_pass, 0, bindings.data(), bindings.size());
 
-        const SDL_GPUBufferBinding idx_buffer_binding = { .buffer = index_buffer, .offset = 0 };
-        SDL_BindGPUIndexBuffer(render_pass, &idx_buffer_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
-
-        // Clamp the counter
-        // int counter = rend_data.cur_sampler_idx;
-        // counter = counter < 0 ? samplers.size() - 1 : counter;
-        // counter = counter % samplers.size();
+        // const SDL_GPUBufferBinding idx_buffer_binding = { .buffer = index_buffer, .offset = 0 };
+        // SDL_BindGPUIndexBuffer(render_pass, &idx_buffer_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
 
         auto& sampler = samplers[0];
         const SDL_GPUTextureSamplerBinding tex_sampler_binding = { .texture = Texture, .sampler = sampler };
         SDL_BindGPUFragmentSamplers(render_pass, 0, &tex_sampler_binding, 1);
 
-        SDL_DrawGPUIndexedPrimitives(render_pass, index_data.size(), 1, 0, 0, 0);
+        SDL_PushGPUVertexUniformData(cmd_buf, 0, &cameraMatrix, sizeof(Matrix4x4));
+
+        SDL_DrawGPUPrimitives(render_pass, SPRITE_COUNT * 6, 1, 0, 0);
+        // SDL_DrawGPUIndexedPrimitives(render_pass, index_data.size(), 1, 0, 0, 0);
+
+        ImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd_buf, render_pass);
 
         SDL_EndGPURenderPass(render_pass);
       }
@@ -844,7 +996,9 @@ RenderThread()
   // Cleanup
   SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
   SDL_ReleaseGPUGraphicsPipeline(device, line_pipeline);
-  SDL_ReleaseGPUBuffer(device, vertex_buffer);
+  SDL_ReleaseGPUTexture(device, Texture);
+  SDL_ReleaseGPUTransferBuffer(device, sprite_data_transfer_buffer);
+  SDL_ReleaseGPUBuffer(device, sprite_data_buffer);
 };
 
 //
@@ -918,6 +1072,27 @@ main(int argc, char* argv[])
   auto device_driver = SDL_GetGPUDeviceDriver(device);
   SDL_Log("Using GPU device driver: %s", device_driver);
 
+  //
+  // Setup ImGUI
+  //
+
+  // clang-format off
+
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO(); (void)io;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+  // Setup Platform/Renderer backends
+  ImGui_ImplSDL3_InitForSDLGPU(window);
+  ImGui_ImplSDLGPU3_InitInfo init_info = {};
+  init_info.Device = device;
+  init_info.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(device, window);
+  init_info.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
+  ImGui_ImplSDLGPU3_Init(&init_info);
+
+  // clang-format on
+
   // Start threads, innit
   std::thread game_thread(GameThread);
   std::thread render_thread(RenderThread);
@@ -933,13 +1108,23 @@ main(int argc, char* argv[])
     static std::vector<SDL_Event> evts;
     evts.clear();
     while (SDL_PollEvent(&e)) {
+      ImGui_ImplSDL3_ProcessEvent(&e);
+
       if (e.type == SDL_EVENT_QUIT)
         running = false;
+      if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(window))
+        running = false;
+
       evts.push_back(e);
     }
 
     // push all the events at once in to a thread-safe vector.
     event_queue.enqueue({ evts.begin(), evts.end() });
+
+    // Call SDL_GetMouseState on main thread.
+    float x = 0, y = 0;
+    SDL_GetMouseState(&x, &y);
+    mouse_pos.store({ x, y });
   }
 
   game_thread.join();

@@ -30,4 +30,5 @@ struct GameData
 {
   entt::registry& r;
   // b2WorldId& world_id;
+  // vec2& mouse_pos;
 };

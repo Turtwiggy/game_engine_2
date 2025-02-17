@@ -25,12 +25,11 @@ set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src)
 set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
 
 # Add source files
-# include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
+
 # include(${CMAKE_SOURCE_DIR}/cmake/optick.cmake)
 file(GLOB_RECURSE SRC_FILES
-
-  # ${IMGUI_SOURCE}
-  # ${OPTICK_SOURCE}
+  ${IMGUI_SOURCE}
   ${CMAKE_SOURCE_DIR}/game/src/dll_boundary/common.hpp
   ${CMAKE_SOURCE_DIR}/game/src/engine/*.cpp
 )
@@ -83,7 +82,7 @@ endif()
 target_include_directories(game PRIVATE
 
   # ${CMAKE_SOURCE_DIR}/thirdparty/magic_enum
-  # ${IMGUI_INCLUDES}
+  ${IMGUI_INCLUDES}
   ${Stb_INCLUDE_DIR}
   ${VCPKG_INCLUDES}
   ${CMAKE_SOURCE_DIR}/thirdparty/box2d/include
