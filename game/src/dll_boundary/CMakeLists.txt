@@ -21,11 +21,13 @@ include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-gcc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
 find_packages()
 
-# set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src)
-# set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
+# Add source files
+include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
 
 # Add source files.
 file(GLOB_RECURSE SRC_FILES
+  ${IMGUI_SOURCE}
+  ${CMAKE_SOURCE_DIR}/game/src/common/common.cpp
   ${CMAKE_SOURCE_DIR}/game/src/dll_boundary/*.cpp
 )
 
@@ -37,7 +39,14 @@ add_library(GameDLL SHARED
 # Link Libraries
 link_libs(GameDLL)
 
-# target_link_libraries(GameDLL PRIVATE ${BOX2D_LIBRARY})
+# Box2D
+if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
+  set(BOX2D_LIBRARY ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/Debug/box2d.lib)
+else()
+  set(BOX2D_LIBRARY ${CMAKE_SOURCE_DIR}/build/box2d/src/box2d.lib)
+endif()
+
+target_link_libraries(GameDLL PRIVATE ${BOX2D_LIBRARY})
 
 # Define the export macro for the .dll
 target_compile_definitions(GameDLL PRIVATE
@@ -45,10 +54,12 @@ target_compile_definitions(GameDLL PRIVATE
 )
 
 target_include_directories(GameDLL PUBLIC
+  ${IMGUI_INCLUDES}
   ${VCPKG_INCLUDES}
   ${CMAKE_SOURCE_DIR}/thirdparty/box2d/include
   ${CMAKE_SOURCE_DIR}/thirdparty/entt/single_include
-  ${CMAKE_SOURCE_DIR}/src/dll_boundary
+  ${CMAKE_SOURCE_DIR}/game/src/common
+  ${CMAKE_SOURCE_DIR}/game/src/dll_boundary
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")

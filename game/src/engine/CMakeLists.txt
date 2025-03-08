@@ -14,7 +14,7 @@ message("game: CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
 message("game: CMAKE_LINKER: ${CMAKE_LINKER}")
 message("game: current_list_dir: ${CMAKE_CURRENT_LIST_DIR}")
 message("game: source_dir: ${CMAKE_SOURCE_DIR}")
-message("index CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
+message("game: CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
 
 # include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-clang.cmake)
 # include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-emscripten.cmake)
@@ -39,7 +39,8 @@ include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
 # include(${CMAKE_SOURCE_DIR}/cmake/optick.cmake)
 file(GLOB_RECURSE SRC_FILES
   ${IMGUI_SOURCE}
-  ${CMAKE_SOURCE_DIR}/game/src/dll_boundary/common.hpp
+  ${CMAKE_SOURCE_DIR}/thirdparty/enkits/TaskScheduler.cpp
+  ${CMAKE_SOURCE_DIR}/game/src/common/common.cpp
   ${CMAKE_SOURCE_DIR}/game/src/engine/*.cpp
 )
 
@@ -57,12 +58,13 @@ endif()
 link_libs(game)
 target_link_libraries(game PUBLIC TracyClient)
 
-# Build Box2D
-# set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/libbox2d.a)
-add_subdirectory(${CMAKE_SOURCE_DIR}/thirdparty/box2d ${CMAKE_SOURCE_DIR}/build/box2d)
-add_dependencies(game box2d)
-set(BOX2D_BUILD_DIR ${CMAKE_SOURCE_DIR}/build/box2d/src/Debug)
-set(BOX2D_LIBRARY ${BOX2D_BUILD_DIR}/box2dd.lib)
+if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
+  set(BOX2D_LIBRARY ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/Debug/box2d.lib)
+else()
+  set(BOX2D_LIBRARY ${CMAKE_SOURCE_DIR}/build/box2d/src/box2d.lib)
+endif()
+
+message("searching for box2d at... ${BOX2D_LIBRARY}")
 target_link_libraries(game PRIVATE ${BOX2D_LIBRARY})
 
 # Build GameDLL
@@ -104,10 +106,11 @@ target_include_directories(game PRIVATE
   ${Stb_INCLUDE_DIR}
   ${VCPKG_INCLUDES}
   ${CMAKE_SOURCE_DIR}/thirdparty/box2d/include
+  ${CMAKE_SOURCE_DIR}/thirdparty/enkits/src
   ${CMAKE_SOURCE_DIR}/thirdparty/entt/single_include
   ${CMAKE_SOURCE_DIR}/thirdparty/sdk/public
+  ${CMAKE_SOURCE_DIR}/game/src/common
   ${CMAKE_SOURCE_DIR}/game/src/engine
-  ${CMAKE_SOURCE_DIR}/game/src/dll_boundary
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")
@@ -154,12 +157,7 @@ ENDIF()
 if(${CMAKE_BUILD_TYPE} MATCHES Debug)
   message("creating symlink...")
   set(src ${CMAKE_SOURCE_DIR}/game/assets)
-
-  if(CMAKE_CXX_COMPILER_ID MATCHES MSVC)
-    set(dst ${CMAKE_CURRENT_BINARY_DIR}/Debug/assets)
-  else()
-    set(dst ${CMAKE_CURRENT_BINARY_DIR}/assets)
-  endif()
+  set(dst ${CMAKE_CURRENT_BINARY_DIR}/assets)
 
   message("creating symlink src... ${src}")
   message("creating symlink dst... ${dst}")

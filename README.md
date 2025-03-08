@@ -110,3 +110,15 @@ I develop with visual studio code. You can open the .code-workspace using the C/
     VS Marketplace Link: https://marketplace.visualstudio.com/items?itemName=vector-of-bool.cmake-tools
 
 For a more complete list see [.vscode/extensions.json](.vscode/extensions.json)
+
+### Box2D
+
+Note: if using the dll hot reload, build box2d as a shared dll
+
+```
+mkdir build
+cd build
+cmake ..
+cmake -DBOX2D_SAMPLES=OFF -DBUILD_SHARED_LIBS=ON ..
+cmake --build . --config Debug
+```
