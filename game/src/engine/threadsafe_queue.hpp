@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <mutex>
 #include <vector>
 
@@ -14,12 +15,15 @@ struct EventQueue
     data.insert(data.end(), t.begin(), t.end());
   };
 
-  std::vector<T> dequeue()
+  std::vector<T> dequeue_all()
   {
     std::lock_guard<std::mutex> lock(m);
 
-    if (data.size() > 0)
-      return std::move(data);
+    if (data.size() > 0) {
+      const std::vector<T> result = std::move(data);
+      data.clear();
+      return result;
+    }
 
     return {};
   }

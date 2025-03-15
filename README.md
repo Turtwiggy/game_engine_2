@@ -118,7 +118,6 @@ Note: if using the dll hot reload, build box2d as a shared dll
 ```
 mkdir build
 cd build
-cmake ..
-cmake -DBOX2D_SAMPLES=OFF -DBUILD_SHARED_LIBS=ON ..
-cmake --build . --config Debug
+cmake -DBOX2D_SAMPLES=OFF -DBOX2D_UNIT_TESTS=OFF -DBUILD_SHARED_LIBS=ON .. -G Ninja
+cmake --build . --config Release
 ```

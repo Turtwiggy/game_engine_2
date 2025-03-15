@@ -15,8 +15,8 @@ namespace game2d {
 
 // Functions we call from the dll
 typedef void (*game_init_func_t)(GameData* data);
-typedef void (*game_fixed_update_func_t)();
-typedef void (*game_update_func_t)();
+typedef void (*game_fixed_update_func_t)(GameData* data);
+typedef void (*game_update_func_t)(GameData* data);
 typedef void (*game_update_ui_func_t)(GameUIData* data);
 typedef void (*game_refresh_func_t)(GameData* data);
 
@@ -30,8 +30,6 @@ struct sdl_game_code
   game_update_func_t game_update;
   game_update_ui_func_t game_update_ui;
   game_refresh_func_t game_refresh;
-
-  bool is_valid;
 };
 
 sdl_game_code

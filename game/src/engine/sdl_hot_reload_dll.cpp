@@ -3,17 +3,15 @@
 
 #include <SDL3/SDL.h>
 
-#include <format>
-
 namespace game2d {
 
 // Stubs for when we the dll functions are not loaded
 void
 game_init_stub(GameData* data) {};
 void
-game_fixed_update_stub(void) {};
+game_fixed_update_stub(GameData* data) {};
 void
-game_update_stub(void) {};
+game_update_stub(GameData* data) {};
 void
 game_update_ui_stub(GameUIData* ui_data) {};
 void
@@ -56,42 +54,50 @@ sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_nam
     exit(SDL_APP_FAILURE);
   }
 
-  auto init = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_init");
-  if (init == NULL) {
-    throw SDLException("Failed to load game_init() from dll");
-    exit(SDL_APP_FAILURE);
+  {
+    const auto init = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_init");
+    if (init == NULL) {
+      throw SDLException("Failed to load game_init() from dll");
+      exit(SDL_APP_FAILURE);
+    }
+    result.game_init = init;
   }
-  result.game_init = init;
 
-  auto fixed_update = (void (*)())SDL_LoadFunction(result.game_code_dll, "game_fixed_update");
-  if (fixed_update == NULL) {
-    throw SDLException("Failed to load game_fixed_update() from dll");
-    exit(SDL_APP_FAILURE);
+  {
+    const auto fixed_update = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_fixed_update");
+    if (fixed_update == NULL) {
+      throw SDLException("Failed to load game_fixed_update() from dll");
+      exit(SDL_APP_FAILURE);
+    }
+    result.game_fixed_update = fixed_update;
   }
-  result.game_fixed_update = fixed_update;
 
-  auto update = (void (*)())SDL_LoadFunction(result.game_code_dll, "game_update");
-  if (init == NULL) {
-    throw SDLException("Failed to load game_update() from dll");
-    exit(SDL_APP_FAILURE);
+  {
+    const auto update = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_update");
+    if (update == NULL) {
+      throw SDLException("Failed to load game_update() from dll");
+      exit(SDL_APP_FAILURE);
+    }
+    result.game_update = update;
   }
-  result.game_update = update;
 
-  auto update_ui = (void (*)(GameUIData*))SDL_LoadFunction(result.game_code_dll, "game_update_ui");
-  if (!update_ui) {
-    throw SDLException("Failed to load game_update_ui() from dll");
-    exit(SDL_APP_FAILURE);
+  {
+    const auto update_ui = (void (*)(GameUIData*))SDL_LoadFunction(result.game_code_dll, "game_update_ui");
+    if (!update_ui) {
+      throw SDLException("Failed to load game_update_ui() from dll");
+      exit(SDL_APP_FAILURE);
+    }
+    result.game_update_ui = update_ui;
   }
-  result.game_update_ui = update_ui;
 
-  auto refresh = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_refresh");
-  if (!refresh) {
-    throw SDLException("Failed to load game_refresh() from dll");
-    exit(SDL_APP_FAILURE);
+  {
+    const auto refresh = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_refresh");
+    if (!refresh) {
+      throw SDLException("Failed to load game_refresh() from dll");
+      exit(SDL_APP_FAILURE);
+    }
+    result.game_refresh = refresh;
   }
-  result.game_refresh = refresh;
-
-  result.is_valid = true;
 
   SDL_Log("Load DLL... success");
   return result;
@@ -100,8 +106,6 @@ sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_nam
 void
 sdl_unload_game_code(sdl_game_code* game_code)
 {
-  game_code->is_valid = false;
-
   if (game_code->game_code_dll) {
     SDL_Log("Unload DLL...");
     SDL_UnloadObject(game_code->game_code_dll);

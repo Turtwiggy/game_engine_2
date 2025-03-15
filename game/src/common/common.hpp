@@ -1,9 +1,12 @@
 #pragma once
 
+#include "box2d/id.h"
+#include <SDL3/SDL.h>
 #include <box2d/box2d.h>
 #include <entt/entt.hpp>
 #include <imgui.h>
 
+#include <mutex>
 #include <random>
 
 namespace game2d {
@@ -12,7 +15,13 @@ namespace game2d {
 // some sort of shared file with the engine.
 //
 
-struct vec2
+#if defined(DLL_EXPORTS)
+#define DLL_API __declspec(dllexport)
+#else
+#define DLL_API __declspec(dllimport)
+#endif
+
+struct DLL_API vec2
 {
   float x = 0.0;
   float y = 0.0;
@@ -34,14 +43,14 @@ struct vec2
 vec2
 operator*(const float other, const vec2& v);
 
-struct vec3
+struct DLL_API vec3
 {
   float x = 0.0f;
   float y = 0.0f;
   float z = 0.0f;
 };
 
-struct PhysicsBodyComponent
+struct DLL_API PhysicsBodyComponent
 {
   b2BodyId id;
 };
@@ -55,14 +64,14 @@ pixels_to_meters(float pixels);
 b2Vec2
 pixels_to_meters(vec2 pixels);
 
-struct TransformComponent
+struct DLL_API TransformComponent
 {
   vec2 pos{ 0, 0 };
   vec2 size{ 10, 10 };
   float rotation_radians = 0.0f;
 };
 
-struct RandomState
+struct DLL_API RandomState
 {
   std::minstd_rand rng;
 
@@ -73,16 +82,26 @@ struct RandomState
 float
 random(RandomState& rnd, const float M, const float MN);
 
-struct GameData
+struct DLL_API GameData
 {
   entt::registry& r;
   b2WorldId world_id;
-  // vec2& mouse_pos;
+
+  vec2 mouse_pos{ 0, 0 };
+  std::vector<SDL_Event> events;
+
+  float dt = 0.0f;
 };
 
-struct GameUIData
+struct DLL_API GameUIData
 {
+  std::mutex mtx; // mutex to protect access to data
+
+  // data
   ImGuiContext* ctx;
+
+  // updated by gamethread, read by render thread
+  float game_dt = 0.0f;
 };
 
 } // namespace game2d

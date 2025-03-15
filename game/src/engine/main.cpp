@@ -7,8 +7,8 @@
 #include "sdl_hot_reload_dll.hpp"
 #include "sdl_shader.hpp"
 #include "sdl_surface.hpp"
-#include "systems/render_helpers.hpp"
 #include "threadsafe_queue.hpp"
+#include <mutex>
 using namespace game2d;
 
 #if !defined(TRACY_ENABLE)
@@ -114,10 +114,7 @@ struct RenderData
 {
   std::mutex mtx; // mutex to protect access to data
 
-  // bool use_wireframe_mode = false;
-  // bool use_small_viewport = false;
-  // bool use_scissor_viewport = false;
-  // int cur_sampler_idx = 0;
+  // data
   std::vector<TransformComponent> transforms;
 };
 
@@ -130,8 +127,6 @@ struct RenderData
 //
 // clang-format off
 
-entt::registry game_r;
-GameData game_data = {game_r};
 GameUIData game_ui_data;
 RenderData rend_data[2];
 std::atomic<vec2> mouse_pos;
@@ -141,7 +136,8 @@ RenderData& GetReadBuffer(){return rend_data[current_read_buffer.load(std::memor
 void SwapBuffers() {current_read_buffer.store(1 - current_read_buffer.load(), std::memory_order_release);};
 
 sdl_game_code game_code;
-std::atomic<bool> rebuild_game_code_dll{false};
+std::atomic<bool> game_code_valid{false};
+std::mutex game_code_mtx;
 
 // clang-format on
 
@@ -163,31 +159,23 @@ GameThread()
   const auto info_str = std::format("(GameThread) SDL_IsMainThread(): {}", SDL_IsMainThread());
   SDL_Log("%s", info_str.c_str());
 
-  if (!game_code.is_valid) {
+  if (!game_code_valid.load()) {
     throw std::runtime_error("Failed to load .dll");
     exit(SDL_APP_FAILURE);
   }
 
-  game_code.game_init(&game_data);
-
-  //
   // physics innit
-  //
-
   const auto logical_cpu_cores = SDL_GetNumLogicalCPUCores();
   SDL_Log("LogicalCPUCores: %i", logical_cpu_cores);
-
   // threads used (main, game, render)
   // const int used_threads = 3;
   // const int max_thread_count = std::max(1, logical_cpu_cores - used_threads);
   // SDL_Log("%s", std::format("Giving box2d {} threads", max_thread_count).c_str());
-
   // TODO: work out what this value should be
-  int worker_count = 1;
-
-  std::shared_ptr<Sample> s = std::make_shared<Sample>();
-  s->m_scheduler.Initialize(worker_count);
-  s->m_taskCount = 0;
+  // int worker_count = 1;
+  // std::shared_ptr<Sample> s = std::make_shared<Sample>();
+  // s->m_scheduler.Initialize(worker_count);
+  // s->m_taskCount = 0;
 
   b2WorldDef world_def = b2DefaultWorldDef();
   // world_def.workerCount = worker_count;
@@ -196,52 +184,16 @@ GameThread()
   // world_def.userTaskContext = s.get();
   world_def.gravity = { 0.0f, 0.0f };
   world_def.enableSleep = true;
-  b2WorldId world_id = b2CreateWorld(&world_def);
 
-  auto& r = game_data.r;
-  b2BodyId body_id_0;
-  b2BodyId body_id_1;
+  //  game init after physics init
+  auto world_id = b2CreateWorld(&world_def);
 
-  {
-    b2Vec2 size_meters = { 4, 4 };
-    b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
-
-    b2BodyDef bodyDef = b2DefaultBodyDef();
-    bodyDef.type = b2_dynamicBody;
-    bodyDef.position = b2Vec2{ pixels_to_meters({ 600, 300 }) };
-    bodyDef.fixedRotation = true;
-    body_id_0 = b2CreateBody(world_id, &bodyDef);
-
-    b2ShapeDef shapeDef = b2DefaultShapeDef();
-    b2CreatePolygonShape(body_id_0, &shapeDef, &box);
-
-    TransformComponent t_c;
-    t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
-    t_c.size = meters_to_pixels(size_meters);
-    auto e = r.create();
-    r.emplace<TransformComponent>(e, t_c);
-    r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
-  }
+  entt::registry r;
+  GameData game_data{ .r = r, .world_id = world_id };
 
   {
-    b2Vec2 size_meters = { 6, 6 };
-    b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
-
-    b2BodyDef bodyDef = b2DefaultBodyDef();
-    bodyDef.type = b2_dynamicBody;
-    bodyDef.position = b2Vec2{ pixels_to_meters({ 300, 300 }) };
-    bodyDef.fixedRotation = true;
-    body_id_1 = b2CreateBody(world_id, &bodyDef);
-
-    b2ShapeDef shapeDef = b2DefaultShapeDef();
-    b2CreatePolygonShape(body_id_1, &shapeDef, &box);
-
-    TransformComponent t_c;
-    t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
-    t_c.size = meters_to_pixels(size_meters);
-    auto e = r.create();
-    r.emplace<TransformComponent>(e, t_c);
-    r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_1 });
+    std::scoped_lock<std::mutex> lock(game_code_mtx);
+    game_code.game_init(&game_data);
   }
 
   SDL_Log("(GameThread) -- done init");
@@ -251,66 +203,81 @@ GameThread()
     static Uint64 game_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
+    const float dt = 1e-9 * (float)dt_ns; // inaccurate, but for game
     ZoneScopedN("GameThread");
 
     // pop all the events at once from a thread-safe buffer.
-    const auto new_evts = event_queue.dequeue();
-
-    for (const SDL_Event& evt : new_evts) {
-      if (evt.type == SDL_EVENT_KEY_DOWN) {
-        const auto scancode = evt.key.scancode;
-        const auto scancode_name = SDL_GetScancodeName(scancode);
-        const auto down = evt.key.down;
-        const auto repeat = evt.key.repeat;
-        SDL_Log("(GameThread) KeyDown %s %i %i", scancode_name, down, repeat);
-      }
-      if (evt.type == SDL_EVENT_KEY_UP) {
-        // SDL_Log("(GameThread) KeyUp");
-      }
+    {
+      std::scoped_lock lock(game_code_mtx);
+      game_data.events = event_queue.dequeue_all();
+      game_data.dt = dt;
+      game_data.mouse_pos = mouse_pos.load();
     }
 
-    // auto mp = mouse_pos.load();
+    // update ui data
+    {
+      std::scoped_lock lock(game_ui_data.mtx);
+      game_ui_data.game_dt = dt;
+    }
 
     // run physics at fixed timesteps
     static Uint64 accu = 0;
     constexpr int physics_substep_count = 4;
+    constexpr float physics_dt = 1.0f / 60.0f;
     constexpr Uint64 NS_PER_FIXED_TICK = 1e9 / 60.0f;
-    constexpr float dt = 1.0f / 60.0f;
     accu += dt_ns;
     while (accu >= NS_PER_FIXED_TICK) {
       accu -= NS_PER_FIXED_TICK;
 
-      if (!rebuild_game_code_dll.load() && game_code.is_valid)
-        game_code.game_fixed_update();
+      // FixedUpdate()
+      {
+        std::scoped_lock<std::mutex> lock(game_code_mtx);
+        if (game_code_valid.load())
+          game_code.game_fixed_update(&game_data);
+      }
 
-      b2World_Step(world_id, dt, physics_substep_count);
-      s->m_taskCount = 0;
+      b2World_Step(game_data.world_id, physics_dt, physics_substep_count);
+      // s->m_taskCount = 0;
     }
 
-    if (!rebuild_game_code_dll.load() && game_code.is_valid)
-      game_code.game_update();
+    // GameUpdate()
 
-    // Update transforms via physics body.
-    update_transforms_from_physics(r);
+    for (const auto& evt : game_data.events) {
+      if (evt.type == SDL_EVENT_KEY_DOWN) {
+        const auto scancode = evt.key.scancode;
+        if (scancode == SDL_SCANCODE_9) {
+          {
+            std::scoped_lock<std::mutex> lock(game_code_mtx);
+            if (game_code_valid.load())
+              game_code.game_refresh(&game_data);
+          }
+        }
+      }
+    }
+
+    {
+      std::scoped_lock<std::mutex> lock(game_code_mtx);
+      if (game_code_valid.load())
+        game_code.game_update(&game_data);
+    }
 
     // Ding ding! frame done. UpdateRenderData
-    auto view = game_data.r.view<const TransformComponent>();
     const int write_buffer_index = 1 - current_read_buffer.load(std::memory_order_acquire);
     RenderData& wb = rend_data[write_buffer_index];
     {
-      std::lock_guard<std::mutex> lock(wb.mtx);
+      std::scoped_lock<std::mutex> lock0(wb.mtx);
 
-      // could do something better than .clear()
-      wb.transforms.clear();
+      auto view = game_data.r.view<TransformComponent>();
+      wb.transforms.clear(); // should do something better than .clear()
       const auto get_comp = [](const auto& tuple) -> TransformComponent { return std::get<1>(tuple); };
       std::ranges::copy(view.each() | std::views::transform(get_comp), std::back_inserter(wb.transforms));
     }
-    SwapBuffers();
 
+    SwapBuffers();
     FrameMark; // frame done
   }
 
-  b2DestroyWorld(world_id);
+  b2DestroyWorld(game_data.world_id);
 };
 
 // Vertex Formats
@@ -677,8 +644,8 @@ RenderThread()
   auto* copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
 
   // const auto v_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
-  // const auto v_buffer_region = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = vertex_data_mem_size };
-  // SDL_UploadToGPUBuffer(copy_pass, &v_buffer_location, &v_buffer_region, false);
+  // const auto v_buffer_region = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .offset = 0, .size = vertex_data_mem_size
+  // }; SDL_UploadToGPUBuffer(copy_pass, &v_buffer_location, &v_buffer_region, false);
 
   // auto offset = vertex_data_mem_size;
   // const auto i_buffer_location = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = offset };
@@ -715,7 +682,7 @@ RenderThread()
     auto& read_buffer = GetReadBuffer();
     RenderData rd;
     {
-      std::lock_guard<std::mutex> lock(read_buffer.mtx);
+      std::scoped_lock<std::mutex> lock(read_buffer.mtx);
 
       // take a copy
       rd.transforms = read_buffer.transforms;
@@ -729,8 +696,12 @@ RenderThread()
 
     ImGui::ShowDemoWindow(NULL);
 
-    if (!rebuild_game_code_dll.load() && game_code.is_valid)
-      game_code.game_update_ui(&game_ui_data);
+    {
+      std::scoped_lock<std::mutex> lock0(game_code_mtx);
+      std::scoped_lock<std::mutex> lock1(game_ui_data.mtx);
+      if (game_code_valid.load())
+        game_code.game_update_ui(&game_ui_data);
+    }
 
     // if (transforms.size() > 0) {
     //   const auto msg = std::format("(RT) transforms: {}", transforms.size());
@@ -889,7 +860,7 @@ RenderThread()
 int
 main(int argc, char* argv[])
 {
-  setvbuf(stdout, nullptr, _IONBF, 0); // dont buffer
+  // setvbuf(stdout, nullptr, _IONBF, 0); // dont buffer
 
 #if defined(SDL_PLATFORM_WIN32)
   SDL_Log("Hello, Windows!");
@@ -969,7 +940,11 @@ main(int argc, char* argv[])
   // load game_code dll
   const auto src_dll = "GameDLL.dll";
   const auto dst_dll = "GameDLL-locked.dll"; // when loaded, system processor locks it
-  game_code = sdl_load_game_code(src_dll, dst_dll);
+  {
+    std::scoped_lock<std::mutex> lock(game_code_mtx);
+    game_code = sdl_load_game_code(src_dll, dst_dll);
+    game_code_valid.store(true);
+  }
 
   // Start threads, innit
   std::thread game_thread(GameThread);
@@ -1015,30 +990,26 @@ main(int argc, char* argv[])
 
     // Rebuild the dll
     if (rebuild_dll) {
-      rebuild_game_code_dll.store(true);
+      std::scoped_lock<std::mutex> lock(game_code_mtx);
+
+      SDL_Log("Rebuild dll...");
 
       // rebuild_dll
       const auto build_script = "rebuild_dll.bat";
-      const auto base_path = SDL_GetBasePath();
-      const auto full_path = std::format("{}assets/scripts/{}", base_path, build_script);
-      SDL_Time ticks;
-      if (!SDL_GetCurrentTime(&ticks)) {
-        throw SDLException("Failed to get time");
-        exit(SDL_APP_FAILURE);
-      }
-
-      const auto cmd = std::format("{}", full_path, (Sint64)ticks);
+      const auto full_path = std::format("{}assets/scripts/{}", SDL_GetBasePath(), build_script);
+      const auto cmd = std::format("{}", full_path);
       const int result = std::system(cmd.c_str());
-      if (result != 0) {
+
+      if (result != 0)
         SDL_Log("Build failed...");
-      } else {
-        SDL_Log("Done...");
+
+      if (result == 0) {
+        SDL_Log("Build success...");
+        game_code_valid.store(false);
         sdl_unload_game_code(&game_code);
         game_code = sdl_load_game_code(src_dll, dst_dll);
-        game_code.game_refresh(&game_data);
+        game_code_valid.store(true);
       }
-
-      rebuild_game_code_dll.store(false);
     }
 
     FrameMark; // frame done

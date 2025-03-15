@@ -15,7 +15,7 @@ del C:\Programming\c++_game_engine_2\build\game\src\dll_boundary\GameDLL.pdb
 call "C:/Program Files/CMake/bin/cmake.exe" --build build --config Debug --target GameDLL
 popd
 
-echo Done building...
+echo Success... Built DLL...
 
 :: Verify build succeeded before copying
 if errorlevel 1 (
@@ -32,11 +32,11 @@ set COPY_CMD=xcopy /Y "%DLL_SRC%" "%DLL_DST%"
 
 if exist %DLL_SRC% (
   echo F | %COPY_CMD% > nul
-  echo Done copying dll...
+  echo Success... Copy dll...
 ) else (
   echo DLL not found at %DLL_SRC%
   exit /b 1
 )
 
-@REM success
+:: success exit code
 exit /b 0

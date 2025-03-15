@@ -37,7 +37,7 @@ FetchContent_MakeAvailable(tracy)
 include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
 
 # include(${CMAKE_SOURCE_DIR}/cmake/optick.cmake)
-file(GLOB_RECURSE SRC_FILES
+file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS "*.cpp"
   ${IMGUI_SOURCE}
   ${CMAKE_SOURCE_DIR}/thirdparty/enkits/TaskScheduler.cpp
   ${CMAKE_SOURCE_DIR}/game/src/common/common.cpp
@@ -56,19 +56,17 @@ else()
 endif()
 
 link_libs(game)
-target_link_libraries(game PUBLIC TracyClient)
-
-if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
-  set(BOX2D_LIBRARY ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/Debug/box2d.lib)
-else()
-  set(BOX2D_LIBRARY ${CMAKE_SOURCE_DIR}/build/box2d/src/box2d.lib)
-endif()
-
-message("searching for box2d at... ${BOX2D_LIBRARY}")
-target_link_libraries(game PRIVATE ${BOX2D_LIBRARY})
 
 # Build GameDLL
 add_dependencies(game GameDLL)
+set(LIB_SRC ${CMAKE_SOURCE_DIR}/build/game/src/dll_boundary/GameDLL.lib)
+message("searching for .dll at... ${LIB_SRC}")
+target_link_libraries(game PRIVATE ${LIB_SRC})
+
+target_link_libraries(game PUBLIC TracyClient)
+set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
+message("searching for box2d at... ${BOX2D_LIB}")
+target_link_libraries(game PRIVATE ${BOX2D_LIB})
 
 # Copy the game.dll
 if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
@@ -107,7 +105,7 @@ target_include_directories(game PRIVATE
   ${VCPKG_INCLUDES}
   ${CMAKE_SOURCE_DIR}/thirdparty/box2d/include
   ${CMAKE_SOURCE_DIR}/thirdparty/enkits/src
-  ${CMAKE_SOURCE_DIR}/thirdparty/entt/single_include
+  ${CMAKE_SOURCE_DIR}/thirdparty/entt/src
   ${CMAKE_SOURCE_DIR}/thirdparty/sdk/public
   ${CMAKE_SOURCE_DIR}/game/src/common
   ${CMAKE_SOURCE_DIR}/game/src/engine
