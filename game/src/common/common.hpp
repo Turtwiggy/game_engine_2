@@ -6,7 +6,6 @@
 #include <entt/entt.hpp>
 #include <imgui.h>
 
-#include <mutex>
 #include <random>
 
 namespace game2d {
@@ -52,8 +51,13 @@ struct DLL_API vec3
 
 struct DLL_API PhysicsBodyComponent
 {
-  b2BodyId id;
+  b2BodyId id = B2_ZERO_INIT;
 };
+
+// struct DLL_API CameraComponent
+// {
+//   bool placeholder = true;
+// };
 
 float
 meters_to_pixels(float meters);
@@ -82,6 +86,17 @@ struct DLL_API RandomState
 float
 random(RandomState& rnd, const float M, const float MN);
 
+struct DLL_API CommonUiData
+{
+  // data to show in UI
+  float game_dt = 0.0f;
+  int n_controllers = 0;
+  vec2 controller_l{ 0, 0 };
+  vec2 controller_r{ 0, 0 };
+
+  // std::vector<std::pair<std::string, std::string>> something;
+};
+
 struct DLL_API GameData
 {
   entt::registry& r;
@@ -90,18 +105,15 @@ struct DLL_API GameData
   vec2 mouse_pos{ 0, 0 };
   std::vector<SDL_Event> events;
 
-  float dt = 0.0f;
+  CommonUiData ui_data = {};
 };
 
 struct DLL_API GameUIData
 {
-  std::mutex mtx; // mutex to protect access to data
-
   // data
   ImGuiContext* ctx;
 
-  // updated by gamethread, read by render thread
-  float game_dt = 0.0f;
+  CommonUiData ui_data = {};
 };
 
 } // namespace game2d

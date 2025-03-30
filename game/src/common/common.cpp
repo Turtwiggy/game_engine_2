@@ -15,15 +15,15 @@ vec2::operator*(const vec2& other) const
 };
 
 vec2
-vec2::operator/(const vec2& other) const
-{
-  return { x / other.x, y / other.y };
-};
-
-vec2
 operator*(const float other, const vec2& v)
 {
   return { other * v.x, other * v.y };
+};
+
+vec2
+vec2::operator/(const vec2& other) const
+{
+  return { x / other.x, y / other.y };
 };
 
 constexpr float PIXELS_PER_METER = 50;

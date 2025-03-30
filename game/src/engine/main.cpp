@@ -1,19 +1,12 @@
 
-#include "box2d/math_functions.h"
-#include "box2d/types.h"
-#include "box2d_parallel.hpp"
 #include "common.hpp"
 #include "sdl_exception.hpp"
 #include "sdl_hot_reload_dll.hpp"
 #include "sdl_shader.hpp"
 #include "sdl_surface.hpp"
 #include "threadsafe_queue.hpp"
-#include <mutex>
+#include <shared_mutex>
 using namespace game2d;
-
-#if !defined(TRACY_ENABLE)
-#define TRACY_ENABLE
-#endif
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_cpuinfo.h>
@@ -21,12 +14,20 @@ using namespace game2d;
 #include <SDL3/SDL_gpu.h>
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_joystick.h>
 #include <SDL3/SDL_loadso.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_timer.h>
+
+// #include "box2d_parallel.hpp"
 #include <box2d/box2d.h>
 #include <box2d/id.h>
 #include <entt/entt.hpp>
+
+#if !defined(TRACY_ENABLE)
+#define TRACY_ENABLE
+#define TRACY_CALLSTACK
+#endif
 #include <tracy/Tracy.hpp>
 
 // #include <backends/imgui_impl_vulkan.h>
@@ -39,6 +40,7 @@ using namespace game2d;
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <mutex>
 #include <ranges>
 #include <stdexcept>
 #include <thread>
@@ -116,6 +118,8 @@ struct RenderData
 
   // data
   std::vector<TransformComponent> transforms;
+
+  CommonUiData ui_data;
 };
 
 //
@@ -127,17 +131,19 @@ struct RenderData
 //
 // clang-format off
 
-GameUIData game_ui_data;
+
+vec2 mouse_pos;
 RenderData rend_data[2];
-std::atomic<vec2> mouse_pos;
 std::atomic<int> current_read_buffer = 0;
 RenderData& GetWriteBuffer(){return rend_data[1 - current_read_buffer.load(std::memory_order_acquire)];};
 RenderData& GetReadBuffer(){return rend_data[current_read_buffer.load(std::memory_order_acquire)];};
 void SwapBuffers() {current_read_buffer.store(1 - current_read_buffer.load(), std::memory_order_release);};
 
+std::mutex game_ui_mtx; // lock when update, not read?
+GameUIData game_ui_data;
+
+std::shared_mutex rebuild_dll_mtx;
 sdl_game_code game_code;
-std::atomic<bool> game_code_valid{false};
-std::mutex game_code_mtx;
 
 // clang-format on
 
@@ -159,7 +165,7 @@ GameThread()
   const auto info_str = std::format("(GameThread) SDL_IsMainThread(): {}", SDL_IsMainThread());
   SDL_Log("%s", info_str.c_str());
 
-  if (!game_code_valid.load()) {
+  if (!game_code.valid) {
     throw std::runtime_error("Failed to load .dll");
     exit(SDL_APP_FAILURE);
   }
@@ -177,47 +183,26 @@ GameThread()
   // s->m_scheduler.Initialize(worker_count);
   // s->m_taskCount = 0;
 
-  b2WorldDef world_def = b2DefaultWorldDef();
-  // world_def.workerCount = worker_count;
-  // world_def.enqueueTask = EnqueueTask;
-  // world_def.finishTask = FinishTask;
-  // world_def.userTaskContext = s.get();
-  world_def.gravity = { 0.0f, 0.0f };
-  world_def.enableSleep = true;
-
   //  game init after physics init
-  auto world_id = b2CreateWorld(&world_def);
-
   entt::registry r;
-  GameData game_data{ .r = r, .world_id = world_id };
-
-  {
-    std::scoped_lock<std::mutex> lock(game_code_mtx);
-    game_code.game_init(&game_data);
-  }
+  GameData game_data{ .r = r, .world_id = b2WorldId() };
+  game_code.game_init(&game_data);
 
   SDL_Log("(GameThread) -- done init");
   tracy::SetThreadName("GameThread");
 
   while (running) {
+    ZoneScopedN("GameThread");
+
     static Uint64 game_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
-    const float dt = 1e-9 * (float)dt_ns; // inaccurate, but for game
-    ZoneScopedN("GameThread");
+    const float dt = 1e-9 * (float)dt_ns;
 
     // pop all the events at once from a thread-safe buffer.
     {
-      std::scoped_lock lock(game_code_mtx);
       game_data.events = event_queue.dequeue_all();
-      game_data.dt = dt;
-      game_data.mouse_pos = mouse_pos.load();
-    }
-
-    // update ui data
-    {
-      std::scoped_lock lock(game_ui_data.mtx);
-      game_ui_data.game_dt = dt;
+      game_data.mouse_pos = mouse_pos;
     }
 
     // run physics at fixed timesteps
@@ -231,33 +216,39 @@ GameThread()
 
       // FixedUpdate()
       {
-        std::scoped_lock<std::mutex> lock(game_code_mtx);
-        if (game_code_valid.load())
+        std::shared_lock lock(rebuild_dll_mtx);
+        if (game_code.valid) {
+          ZoneScopedN("(GameThread) game_fixed_update()");
           game_code.game_fixed_update(&game_data);
+        }
       }
 
       b2World_Step(game_data.world_id, physics_dt, physics_substep_count);
       // s->m_taskCount = 0;
     }
 
-    // GameUpdate()
-
+    // Events()
     for (const auto& evt : game_data.events) {
       if (evt.type == SDL_EVENT_KEY_DOWN) {
         const auto scancode = evt.key.scancode;
         if (scancode == SDL_SCANCODE_9) {
           {
-            std::scoped_lock<std::mutex> lock(game_code_mtx);
-            if (game_code_valid.load())
+            std::shared_lock lock(rebuild_dll_mtx);
+            SDL_Log("(GameThread) game_refresh()");
+            if (game_code.valid) {
               game_code.game_refresh(&game_data);
+              game_code.game_init(&game_data);
+            }
           }
         }
       }
     }
 
+    // GameUpdate()
     {
-      std::scoped_lock<std::mutex> lock(game_code_mtx);
-      if (game_code_valid.load())
+      ZoneScopedN("(GameThread) game_update()");
+      std::shared_lock lock(rebuild_dll_mtx);
+      if (game_code.valid)
         game_code.game_update(&game_data);
     }
 
@@ -265,12 +256,18 @@ GameThread()
     const int write_buffer_index = 1 - current_read_buffer.load(std::memory_order_acquire);
     RenderData& wb = rend_data[write_buffer_index];
     {
+      ZoneScopedN("(GameThread) game_update_write()");
       std::scoped_lock<std::mutex> lock0(wb.mtx);
 
-      auto view = game_data.r.view<TransformComponent>();
+      // copy transforms in to RenderData.
+      auto view = game_data.r.group<TransformComponent>();
       wb.transforms.clear(); // should do something better than .clear()
       const auto get_comp = [](const auto& tuple) -> TransformComponent { return std::get<1>(tuple); };
       std::ranges::copy(view.each() | std::views::transform(get_comp), std::back_inserter(wb.transforms));
+
+      // copy anything else in to renderdata buffer.
+      wb.ui_data = game_data.ui_data;
+      wb.ui_data.game_dt = dt;
     }
 
     SwapBuffers();
@@ -670,6 +667,7 @@ RenderThread()
   // WaitForMainThread();
 
   tracy::SetThreadName("RenderThread");
+
   while (running) {
     ZoneScopedN("RenderThread");
 
@@ -682,10 +680,12 @@ RenderThread()
     auto& read_buffer = GetReadBuffer();
     RenderData rd;
     {
+      ZoneScopedN("(RenderThread) read_buffer_copy");
       std::scoped_lock<std::mutex> lock(read_buffer.mtx);
 
       // take a copy
       rd.transforms = read_buffer.transforms;
+      game_ui_data.ui_data = read_buffer.ui_data;
     }
     const auto& transforms = rd.transforms;
 
@@ -697,10 +697,11 @@ RenderThread()
     ImGui::ShowDemoWindow(NULL);
 
     {
-      std::scoped_lock<std::mutex> lock0(game_code_mtx);
-      std::scoped_lock<std::mutex> lock1(game_ui_data.mtx);
-      if (game_code_valid.load())
+      std::shared_lock lock(rebuild_dll_mtx);
+      if (game_code.valid) {
+        ZoneScopedN("(RenderThread) game_update_ui()");
         game_code.game_update_ui(&game_ui_data);
+      }
     }
 
     // if (transforms.size() > 0) {
@@ -880,11 +881,29 @@ main(int argc, char* argv[])
   SDL_Log("You have %i logical cpu cores", SDL_GetNumLogicalCPUCores());
   SDL_Log("(main()) SDL_IsMainThread(): %i", SDL_IsMainThread());
 
-  if (!SDL_SetAppMetadata("Example Snake game", "1.0", "com.blueberrygames.game"))
+  if (!SDL_SetAppMetadata("SomeCoolGame", "1.0", "com.blueberrygames.game"))
     throw SDLException("Couldn't SDL_SetAppMetadata()");
 
   if (!SDL_Init(SDL_INIT_VIDEO))
     throw SDLException("Failed to SDL_Init(SDL_INIT_VIDEO)");
+
+  if (!SDL_Init(SDL_INIT_JOYSTICK))
+    throw SDLException("Failed to SDL_Init(SDL_INIT_JOYSTICK)");
+
+  // setup controllers.
+  int num_joysticks = 0;
+  const SDL_JoystickID* joysticks = SDL_GetJoysticks(&num_joysticks);
+  for (int i = 0; i < num_joysticks; i++) {
+    const SDL_JoystickID id = joysticks[i];
+    const auto* name = SDL_GetJoystickNameForID(id);
+    SDL_Log("Joystick %d: %s", i, name ? name : "Unknown");
+
+    const auto* instance = SDL_OpenJoystick(id);
+    if (instance)
+      SDL_Log("Joystick Connected: success");
+    else
+      SDL_Log("Joystick Connected: fail");
+  }
 
   auto flags = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_DXIL;
 #if defined(_DEBUG)
@@ -938,59 +957,59 @@ main(int argc, char* argv[])
   // #elif __APPLE__
   //   "libGameDLL.dylib";
   // load game_code dll
-  const auto src_dll = "GameDLL.dll";
-  const auto dst_dll = "GameDLL-locked.dll"; // when loaded, system processor locks it
-  {
-    std::scoped_lock<std::mutex> lock(game_code_mtx);
-    game_code = sdl_load_game_code(src_dll, dst_dll);
-    game_code_valid.store(true);
-  }
+  const auto src_dll = "GameDLL-hot-unlocked.dll";
+  const auto dst_dll = "GameDLL-hot-locked.dll"; // when loaded, system processor locks it
+
+  // Load GameDLL.dll on launch
+  game_code = sdl_load_game_code(src_dll, dst_dll);
 
   // Start threads, innit
   std::thread game_thread(GameThread);
   std::thread render_thread(RenderThread);
 
   while (running) {
+    ZoneScopedN("MainThread");
     static Uint64 past = SDL_GetTicksNS();
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, past);
     const Uint64 start_s = SDL_GetPerformanceCounter();
-    ZoneScopedN("MainThread");
 
     bool rebuild_dll = false;
 
     // SDL_PollEvent: MainThread
-    static SDL_Event e;
     static std::vector<SDL_Event> evts;
     evts.clear();
-    while (SDL_PollEvent(&e)) {
-      ImGui_ImplSDL3_ProcessEvent(&e);
+    {
+      ZoneScopedN("(MainThread) poll_events()");
 
-      if (e.type == SDL_EVENT_QUIT)
-        running = false;
-      if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(window))
-        running = false;
+      SDL_Event evt;
+      while (SDL_PollEvent(&evt)) {
+        ImGui_ImplSDL3_ProcessEvent(&evt);
 
-      if (e.type == SDL_EVENT_KEY_DOWN) {
-        const auto scancode = e.key.scancode;
-        if (scancode == SDL_SCANCODE_9)
-          rebuild_dll = true;
+        if (evt.type == SDL_EVENT_QUIT)
+          running = false;
+        if (evt.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && evt.window.windowID == SDL_GetWindowID(window))
+          running = false;
+
+        if (evt.type == SDL_EVENT_KEY_DOWN) {
+          const auto scancode = evt.key.scancode;
+          if (scancode == SDL_SCANCODE_9)
+            rebuild_dll = true;
+        }
+
+        evts.push_back(evt);
       }
-
-      evts.push_back(e);
     }
 
     // push all the events at once in to a thread-safe vector.
     event_queue.enqueue(evts);
 
     // Call SDL_GetMouseState on main thread.
-    float x = 0, y = 0;
-    SDL_GetMouseState(&x, &y);
-    mouse_pos.store({ x, y });
+    SDL_GetMouseState(&mouse_pos.x, &mouse_pos.y);
 
     // Rebuild the dll
     if (rebuild_dll) {
-      std::scoped_lock<std::mutex> lock(game_code_mtx);
+      std::unique_lock lock(rebuild_dll_mtx);
 
       SDL_Log("Rebuild dll...");
 
@@ -1005,10 +1024,8 @@ main(int argc, char* argv[])
 
       if (result == 0) {
         SDL_Log("Build success...");
-        game_code_valid.store(false);
         sdl_unload_game_code(&game_code);
         game_code = sdl_load_game_code(src_dll, dst_dll);
-        game_code_valid.store(true);
       }
     }
 

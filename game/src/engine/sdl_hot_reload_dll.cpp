@@ -46,7 +46,7 @@ sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_nam
     throw SDLException("Failed to copy dll.");
     exit(SDL_APP_FAILURE);
   }
-  SDL_Log("DLL copied...");
+  SDL_Log("DLL copied to: %s", dst_dll_name.c_str());
 
   result.game_code_dll = SDL_LoadObject(dst_dll_name.c_str());
   if (result.game_code_dll == NULL) {
@@ -100,12 +100,15 @@ sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_nam
   }
 
   SDL_Log("Load DLL... success");
+  result.valid = true;
   return result;
 };
 
 void
 sdl_unload_game_code(sdl_game_code* game_code)
 {
+  game_code->valid = false;
+
   if (game_code->game_code_dll) {
     SDL_Log("Unload DLL...");
     SDL_UnloadObject(game_code->game_code_dll);

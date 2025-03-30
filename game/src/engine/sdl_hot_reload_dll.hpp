@@ -30,6 +30,8 @@ struct sdl_game_code
   game_update_func_t game_update;
   game_update_ui_func_t game_update_ui;
   game_refresh_func_t game_refresh;
+
+  bool valid = false;
 };
 
 sdl_game_code

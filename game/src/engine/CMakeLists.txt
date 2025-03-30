@@ -21,6 +21,11 @@ message("game: CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
 # include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-msvc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-gcc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
+
+# TODO: be able to compile as one static .exe when HOT_RELOAD 0
+set(HOT_RELOAD 1)
+
+#
 find_packages()
 find_package(Tracy CONFIG REQUIRED)
 
@@ -36,7 +41,6 @@ FetchContent_MakeAvailable(tracy)
 # Add source files
 include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
 
-# include(${CMAKE_SOURCE_DIR}/cmake/optick.cmake)
 file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS "*.cpp"
   ${IMGUI_SOURCE}
   ${CMAKE_SOURCE_DIR}/thirdparty/enkits/TaskScheduler.cpp
@@ -56,27 +60,42 @@ else()
 endif()
 
 link_libs(game)
+target_link_libraries(game PUBLIC TracyClient)
 
 # Build GameDLL
+# note: at some point, I think my plan was to create another cmake project.
+# the problem is that GameDLL.dll is always linked because I link the .lib.
+# if I create all the data in one dll, and both the game and the engine link against it
+# I can avoid linking to GameDLL.lib but instead DataDll.lib
+# I currently hot-reload the dll via GameDLL-hot-unlocked.DLL and GameDLL-hot-locked.DLL#
+# However, I cannot unload GameDLL.dll because I link to the lib????
 add_dependencies(game GameDLL)
 set(LIB_SRC ${CMAKE_SOURCE_DIR}/build/game/src/dll_boundary/GameDLL.lib)
 message("searching for .dll at... ${LIB_SRC}")
 target_link_libraries(game PRIVATE ${LIB_SRC})
 
-target_link_libraries(game PUBLIC TracyClient)
+# Copy box2d dll to game
 set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
 message("searching for box2d at... ${BOX2D_LIB}")
 target_link_libraries(game PRIVATE ${BOX2D_LIB})
 
-# Copy the game.dll
+# Copy dll to GameDLL-hot-unlocked.dll
+# Copy dll to GameDLL.dll
 if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
   message("copying game.dll needs copying...")
-  add_custom_target(do_always ALL
+  add_custom_target(do_always_copy_dll ALL
     COMMAND ${CMAKE_COMMAND} -E remove
     "$<TARGET_FILE_DIR:game>/$<TARGET_FILE_NAME:GameDLL>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "$<TARGET_FILE:GameDLL>"
     "$<TARGET_FILE_DIR:game>"
+  )
+  add_custom_target(do_always_copy_dll_hot_unlocked ALL
+    COMMAND ${CMAKE_COMMAND} -E remove
+    "$<TARGET_FILE_DIR:game>/$<TARGET_FILE_NAME:GameDLL>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "$<TARGET_FILE:GameDLL>"
+    ${CMAKE_CURRENT_BINARY_DIR}/GameDLL-hot-unlocked.dll
   )
 endif()
 
