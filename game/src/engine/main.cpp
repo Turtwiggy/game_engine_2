@@ -112,12 +112,18 @@ static int fps_limit = 240;
 constexpr int SDL_WINDOW_WIDTH = 1280;
 constexpr int SDL_WINDOW_HEIGHT = 720;
 
+struct Renderable
+{
+  TransformComponent transform;
+  ColourComponent colour;
+};
+
 struct RenderData
 {
   std::mutex mtx; // mutex to protect access to data
 
   // data
-  std::vector<TransformComponent> transforms;
+  std::vector<Renderable> renderable;
 
   CommonUiData ui_data;
 };
@@ -183,8 +189,8 @@ GameThread()
   // s->m_taskCount = 0;
 
   //  game init after physics init
-  entt::registry r;
-  GameData game_data{ .r = &r };
+  // entt::registry r;
+  GameData game_data;
   game_code.game_init(&game_data);
 
   SDL_Log("(GameThread) -- done init");
@@ -258,11 +264,16 @@ GameThread()
       ZoneScopedN("(GameThread) game_update_write()");
       std::scoped_lock<std::mutex> lock0(wb.mtx);
 
+      wb.renderable.clear(); // should do something better than .clear()
+
       // copy transforms in to RenderData.
-      auto view = game_data.r->view<TransformComponent>();
-      wb.transforms.clear(); // should do something better than .clear()
-      const auto get_comp = [](const auto& tuple) -> TransformComponent { return std::get<1>(tuple); };
-      std::ranges::copy(view.each() | std::views::transform(get_comp), std::back_inserter(wb.transforms));
+      auto view = game_data.r->group<const TransformComponent, const ColourComponent>();
+      view.each([&](entt::entity e, const auto& t_c, const auto& col_c) {
+        wb.renderable.push_back(Renderable{
+          .transform = t_c,
+          .colour = col_c,
+        });
+      });
 
       // copy anything else in to renderdata buffer.
       wb.ui_data = game_data.ui_data;
@@ -328,9 +339,9 @@ typedef struct SpriteInstance
 {
   float x, y, z;
   float rotation;
-  float w, h, padding_a, padding_b;
+  float w, h, p1, p2;
   float tex_u, tex_v, tex_w, tex_h;
-  float r, g, b, a;
+  float colour[4];
 } SpriteInstance;
 
 typedef struct Matrix4x4
@@ -378,7 +389,7 @@ RenderThread()
     exit(SDL_APP_FAILURE); // explode
   };
 
-  auto frag_shader = game2d::LoadShader(device, "TexturedQuadColor.frag", 1, 0, 0, 0);
+  auto frag_shader = game2d::LoadShader(device, "SolidColorInput.frag", 1, 0, 0, 0);
   if (frag_shader == NULL) {
     SDL_Log("Failed to create frag shader");
     exit(SDL_APP_FAILURE); // explode
@@ -683,10 +694,10 @@ RenderThread()
       std::scoped_lock<std::mutex> lock(read_buffer.mtx);
 
       // take a copy
-      rd.transforms = read_buffer.transforms;
+      rd.renderable = read_buffer.renderable;
       game_ui_data.ui_data = read_buffer.ui_data;
     }
-    const auto& transforms = rd.transforms;
+    const auto& renderables = rd.renderable;
 
     // Start the Dear ImGui frame
     ImGui_ImplSDLGPU3_NewFrame();
@@ -703,8 +714,8 @@ RenderThread()
       }
     }
 
-    // if (transforms.size() > 0) {
-    //   const auto msg = std::format("(RT) transforms: {}", transforms.size());
+    // if (renderables.size() > 0) {
+    //   const auto msg = std::format("(RT) transforms: {}", renderables.size());
     //   SDL_Log("%s", msg.c_str());
     // }
 
@@ -731,40 +742,38 @@ RenderThread()
         // Build sprite instance transfer
         SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, sprite_data_transfer_buffer, true);
         for (Uint32 i = 0; i < SPRITE_COUNT; i += 1) {
-          if (i < transforms.size()) {
-            data_ptr[i].x = transforms[i].pos.x;
-            data_ptr[i].y = transforms[i].pos.y;
-            data_ptr[i].z = 0.0f;
-            data_ptr[i].rotation = transforms[i].rotation_radians;
-            data_ptr[i].w = transforms[i].size.x;
-            data_ptr[i].h = transforms[i].size.y;
-          } else {
 
-            // this should not occur right now,
-            // as we have two transforms.
-            // why is this occuring?
-            if (i == 0) {
-              int k = 1;
-            }
+          data_ptr[i].x = 0.0f;
+          data_ptr[i].y = 0.0f;
+          data_ptr[i].z = 0.0f;
+          data_ptr[i].rotation = 0.0f;
+          data_ptr[i].w = 0.0f;
+          data_ptr[i].h = 0.0f;
 
-            data_ptr[i].x = 0.0f;
-            data_ptr[i].y = 0.0f;
+          if (i < renderables.size()) {
+            const auto& transform = renderables[i].transform;
+            data_ptr[i].x = transform.pos.x;
+            data_ptr[i].y = transform.pos.y;
             data_ptr[i].z = 0.0f;
-            data_ptr[i].rotation = 0.0f;
-            data_ptr[i].w = 0.0f;
-            data_ptr[i].h = 0.0f;
+            data_ptr[i].rotation = transform.rotation_radians;
+            data_ptr[i].w = transform.size.x;
+            data_ptr[i].h = transform.size.y;
           }
 
-          data_ptr[i].padding_a = 0.0f;
-          data_ptr[i].padding_b = 0.0f;
+          data_ptr[i].p1 = 0.0f;
+          data_ptr[i].p2 = 0.0f;
           data_ptr[i].tex_u = 0.0f;
           data_ptr[i].tex_v = 0.0f;
           data_ptr[i].tex_w = 1.0f;
           data_ptr[i].tex_h = 1.0f;
-          data_ptr[i].r = 1.0f;
-          data_ptr[i].g = 1.0f;
-          data_ptr[i].b = 1.0f;
-          data_ptr[i].a = 1.0f;
+
+          if (i < renderables.size()) {
+            const auto& colour = renderables[i].colour;
+            data_ptr[i].colour[0] = colour.r;
+            data_ptr[i].colour[1] = colour.g;
+            data_ptr[i].colour[2] = colour.b;
+            data_ptr[i].colour[3] = colour.a;
+          }
         }
         SDL_UnmapGPUTransferBuffer(device, sprite_data_transfer_buffer);
 

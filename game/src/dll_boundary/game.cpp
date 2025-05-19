@@ -16,21 +16,22 @@
 
 namespace game2d {
 
+static entt::registry internal_r;
 static bool refreshed = false;
 static vec2 l_input{ 0, 0 };
 static vec2 r_input{ 0, 0 };
 static bool jump = false;
 
 void
-create_something(GameData* data, vec2 pos)
+spawn(GameData* data, vec2 pos, vec2 size, bool is_static = false)
 {
-  auto& r = *data->r;
+  auto& r = internal_r;
 
-  b2Vec2 size_meters = pixels_to_meters({ 50, 50 });
+  b2Vec2 size_meters = pixels_to_meters(size);
   b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
 
   b2BodyDef bodyDef = b2DefaultBodyDef();
-  bodyDef.type = b2_dynamicBody;
+  bodyDef.type = is_static ? b2_staticBody : b2_dynamicBody;
   bodyDef.position = b2Vec2{ pixels_to_meters(pos) };
   bodyDef.fixedRotation = true;
   b2BodyId body_id_0 = b2CreateBody(data->world_id, &bodyDef);
@@ -43,6 +44,13 @@ create_something(GameData* data, vec2 pos)
   t_c.size = meters_to_pixels(size_meters);
   entt::entity e = r.create();
   r.emplace<TransformComponent>(e, t_c);
+
+  static RandomState rnd(0);
+  float rnd_r = random(rnd, 0.0f, 1.0f);
+  float rnd_g = random(rnd, 0.0f, 1.0f);
+  float rnd_b = random(rnd, 0.0f, 1.0f);
+  r.emplace<ColourComponent>(e, ColourComponent{ .r = rnd_r, .g = rnd_r, .b = rnd_b });
+
   r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
 };
 
@@ -52,15 +60,12 @@ game_init(GameData* data)
   SDL_Log("(GameEngine) Init()");
 
   // sets as an instance of an entt::registry used by this dll
-  static entt::registry internal_r;
-  if (data->r == nullptr)
-    data->r = &internal_r;
-
-  auto& r = *data->r;
+  data->r = &internal_r;
+  auto& r = internal_r;
 
   {
-    const auto& view = r.view<TransformComponent>();
-    SDL_Log("transforms: %zu", view.size());
+    const auto& view = r.view<TransformComponent, ColourComponent>();
+    SDL_Log("renderables: %zu", view.size_hint());
   }
 
   b2WorldDef world_def = b2DefaultWorldDef();
@@ -72,35 +77,15 @@ game_init(GameData* data)
   world_def.enableSleep = true;
   data->world_id = b2CreateWorld(&world_def);
 
-  create_something(data, { 300, 300 });
-  create_something(data, { 900, 0 });
-
-  {
-    b2Vec2 size_meters = pixels_to_meters({ 1000, 50 });
-    b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
-
-    b2BodyDef bodyDef = b2DefaultBodyDef();
-    bodyDef.type = b2_staticBody;
-    bodyDef.position = b2Vec2{ pixels_to_meters({ 1280 * 0.5f, 720 * 0.75f }) };
-    bodyDef.fixedRotation = true;
-    b2BodyId body_id_0 = b2CreateBody(data->world_id, &bodyDef);
-
-    b2ShapeDef shapeDef = b2DefaultShapeDef();
-    b2CreatePolygonShape(body_id_0, &shapeDef, &box);
-
-    TransformComponent t_c;
-    t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
-    t_c.size = meters_to_pixels(size_meters);
-    auto e = r.create();
-    r.emplace<TransformComponent>(e, t_c);
-    r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
-  }
+  spawn(data, { 300, 300 }, { 50, 50 });
+  spawn(data, { 900, 0 }, { 50, 50 });
+  spawn(data, { 1280 * 0.5f, 720 * 0.75f }, { 1000, 50 }, true);
 };
 
 void
 game_fixed_update(GameData* data)
 {
-  auto& r = *data->r;
+  auto& r = internal_r;
 
   // apply force to physics objects
   // for (const auto& [e, physics_c] : r.view<PhysicsBodyComponent>().each()) {
@@ -114,7 +99,9 @@ game_fixed_update(GameData* data)
     const auto meters_per_second = 0.1f;
     const auto force = b2Body_GetMass(pb_c.id) * meters_per_second * b2Vec2{ l_input.x, l_input.y };
     b2Body_ApplyLinearImpulseToCenter(pb_c.id, force, true);
-    break; // apply force to first dynamic body
+
+    // apply force to first dynamic body
+    break;
   }
 };
 
@@ -122,7 +109,7 @@ void
 game_update(GameData* data)
 {
   const auto evts = data->events;
-  auto& r = *data->r;
+  auto& r = internal_r;
 
   // note: remove static at some point
   // static float timer_cur = 0.0f;
@@ -157,7 +144,7 @@ game_update(GameData* data)
       if (scancode == SDL_SCANCODE_D)
         l_input.x = 1;
       if (scancode == SDL_SCANCODE_KP_0)
-        create_something(data, data->mouse_pos);
+        spawn(data, data->mouse_pos, { 50, 50 });
       if (scancode == SDL_SCANCODE_SPACE)
         jump |= true;
     }
@@ -343,9 +330,9 @@ game_refresh(GameData* data)
   data->world_id = {};
 
   // deletes all the physicsbody
-  auto& r = *data->r;
-  auto view = r.view<PhysicsBodyComponent>();
-  view.each([&r](const auto e, const auto& pb_c) { r.destroy(e); });
+  // auto& r = *data->r;
+  // auto view = r.view<PhysicsBodyComponent>();
+  // view.each([&r](const auto e, const auto& pb_c) { r.destroy(e); });
 };
 
 } // namespace game2d

@@ -80,6 +80,14 @@ struct DLL_API TransformComponent
   float rotation_radians = 0.0f;
 };
 
+struct DLL_API ColourComponent
+{
+  float r = 1.0f;
+  float g = 1.0f;
+  float b = 1.0f;
+  float a = 1.0f;
+};
+
 struct DLL_API RandomState
 {
   std::minstd_rand rng;

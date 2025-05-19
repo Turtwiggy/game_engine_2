@@ -13,3 +13,6 @@
 [submodule "thirdparty/enkits"]
 	path = thirdparty/enkits
 	url = https://github.com/dougbinks/enkiTS.git
+[submodule "thirdparty/shadercross"]
+	path = thirdparty/shadercross
+	url = https://github.com/libsdl-org/SDL_shadercross
