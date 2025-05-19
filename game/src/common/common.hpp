@@ -54,10 +54,15 @@ struct DLL_API PhysicsBodyComponent
   b2BodyId id = B2_ZERO_INIT;
 };
 
-// struct DLL_API CameraComponent
-// {
-//   bool placeholder = true;
-// };
+struct DLL_API CameraComponent
+{
+  bool placeholder = true;
+};
+
+struct DLL_API PersistentComponent
+{
+  bool placeholder = true;
+};
 
 float
 meters_to_pixels(float meters);
@@ -99,7 +104,7 @@ struct DLL_API CommonUiData
 
 struct DLL_API GameData
 {
-  entt::registry& r;
+  entt::registry* r = nullptr;
   b2WorldId world_id;
 
   vec2 mouse_pos{ 0, 0 };

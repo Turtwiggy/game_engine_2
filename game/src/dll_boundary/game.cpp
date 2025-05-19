@@ -1,5 +1,6 @@
 #include "game.hpp"
 
+#include "box2d/id.h"
 #include "common.hpp"
 #include "render_helpers.hpp"
 
@@ -23,6 +24,8 @@ static bool jump = false;
 void
 create_something(GameData* data, vec2 pos)
 {
+  auto& r = *data->r;
+
   b2Vec2 size_meters = pixels_to_meters({ 50, 50 });
   b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
 
@@ -38,15 +41,27 @@ create_something(GameData* data, vec2 pos)
   TransformComponent t_c;
   t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
   t_c.size = meters_to_pixels(size_meters);
-  auto e = data->r.create();
-  data->r.emplace<TransformComponent>(e, t_c);
-  data->r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
+  entt::entity e = r.create();
+  r.emplace<TransformComponent>(e, t_c);
+  r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
 };
 
 void
 game_init(GameData* data)
 {
   SDL_Log("(GameEngine) Init()");
+
+  // sets as an instance of an entt::registry used by this dll
+  static entt::registry internal_r;
+  if (data->r == nullptr)
+    data->r = &internal_r;
+
+  auto& r = *data->r;
+
+  {
+    const auto& view = r.view<TransformComponent>();
+    SDL_Log("transforms: %zu", view.size());
+  }
 
   b2WorldDef world_def = b2DefaultWorldDef();
   // world_def.workerCount = worker_count;
@@ -58,7 +73,7 @@ game_init(GameData* data)
   data->world_id = b2CreateWorld(&world_def);
 
   create_something(data, { 300, 300 });
-  create_something(data, { 600, 300 });
+  create_something(data, { 900, 0 });
 
   {
     b2Vec2 size_meters = pixels_to_meters({ 1000, 50 });
@@ -76,22 +91,22 @@ game_init(GameData* data)
     TransformComponent t_c;
     t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
     t_c.size = meters_to_pixels(size_meters);
-    auto e = data->r.create();
-    data->r.emplace<TransformComponent>(e, t_c);
-    data->r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
+    auto e = r.create();
+    r.emplace<TransformComponent>(e, t_c);
+    r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
   }
 };
 
 void
 game_fixed_update(GameData* data)
 {
-  entt::registry& r = data->r;
+  auto& r = *data->r;
 
   // apply force to physics objects
   // for (const auto& [e, physics_c] : r.view<PhysicsBodyComponent>().each()) {
   // }
 
-  auto view = data->r.view<const PhysicsBodyComponent, const TransformComponent>();
+  auto view = r.view<const PhysicsBodyComponent, const TransformComponent>();
   for (const auto& [e, pb_c, t_c] : view.each()) {
     const b2BodyType type = b2Body_GetType(pb_c.id);
     if (type == b2_staticBody)
@@ -107,7 +122,7 @@ void
 game_update(GameData* data)
 {
   const auto evts = data->events;
-  entt::registry& r = data->r;
+  auto& r = *data->r;
 
   // note: remove static at some point
   // static float timer_cur = 0.0f;
@@ -168,14 +183,14 @@ game_update(GameData* data)
 
       // test if you click a shape
       const auto mouse_pos = data->mouse_pos;
-      auto view = data->r.view<const PhysicsBodyComponent>();
+      auto view = r.view<const PhysicsBodyComponent>();
       for (const auto& [e, pb_c] : view.each()) {
         auto shape_ids = get_shapes(pb_c.id);
         if (b2Shape_TestPoint(shape_ids[0], pixels_to_meters(mouse_pos))) {
 
           // Destroy now!
           b2DestroyBody(pb_c.id);
-          data->r.destroy(e);
+          r.destroy(e);
         }
       }
     }
@@ -261,7 +276,7 @@ game_update(GameData* data)
 
   entt::entity first_dynamic_e = entt::null;
   {
-    auto view = data->r.view<const PhysicsBodyComponent, const TransformComponent>();
+    auto view = r.view<const PhysicsBodyComponent, const TransformComponent>();
     for (const auto& [e, pb_c, t_c] : view.each()) {
       const b2BodyType type = b2Body_GetType(pb_c.id);
       if (type == b2_staticBody)
@@ -295,7 +310,7 @@ game_update_ui(GameUIData* ui_data)
   flags |= ImGuiWindowFlags_NoDecoration;
   flags |= ImGuiWindowFlags_AlwaysAutoResize;
 
-  ImGui::Begin("SomeCrazyWindow", nullptr, flags);
+  ImGui::Begin("SomeOtherCrazyWindow", nullptr, flags);
   ImGui::Text("(GameThread) FPS: %0.2f", 1.0f / data.game_dt);
   ImGui::Text("(RenderThread) FPS: %0.2f", ImGui::GetIO().Framerate);
   ImGui::End();
@@ -305,7 +320,7 @@ game_update_ui(GameUIData* ui_data)
   // ImGui::Text("n_controllers: %i", controllers);
 
   ImGui::Begin("SomeOtherWindow", nullptr, flags);
-  ImGui::Text("Controller");
+  ImGui::Text("Controllers");
 
   ImGui::Text("%i %f %f %f %f",
               data.n_controllers,
@@ -327,21 +342,10 @@ game_refresh(GameData* data)
   b2DestroyWorld(data->world_id);
   data->world_id = {};
 
-  // cleanup physics components
-  auto& r = data->r;
-  const auto view = r.view<PhysicsBodyComponent>();
-  SDL_Log("Destroying %zu PhysicsBodyComponent", view.size());
-
-  for (const auto& [e, pb_c] : view.each()) {
-    r.destroy(e);
-  }
-  // r.destroy(view.begin(), view.end());
-
-  // GameData& data_ref = *your_ref_to_data;
-  // entt::registry& r = your_ref_to_data->r;
-  // auto view = r->view<const TransformComponent>();
-  // const auto info = std::format("(GameEngine) Transforms: {}", view.size());
-  // SDL_Log("%s", info.c_str());
+  // deletes all the physicsbody
+  auto& r = *data->r;
+  auto view = r.view<PhysicsBodyComponent>();
+  view.each([&r](const auto e, const auto& pb_c) { r.destroy(e); });
 };
 
 } // namespace game2d

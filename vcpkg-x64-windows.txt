@@ -3,7 +3,5 @@ nlohmann-json
 sdl3[core,vulkan]
 stb
 tracy
-vulkan
-vulkan-memory-allocator
 --triplet
 x64-windows

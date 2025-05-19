@@ -18,7 +18,7 @@ get_shapes(b2BodyId id)
 void
 update_transforms_from_physics(entt::registry& r)
 {
-  auto view = r.view<PhysicsBodyComponent, TransformComponent>();
+  const auto view = r.view<const PhysicsBodyComponent, TransformComponent>();
   for (const auto& [e, pb_c, t_c] : view.each()) {
 
     const auto id = pb_c.id;

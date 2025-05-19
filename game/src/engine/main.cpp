@@ -131,7 +131,6 @@ struct RenderData
 //
 // clang-format off
 
-
 vec2 mouse_pos;
 RenderData rend_data[2];
 std::atomic<int> current_read_buffer = 0;
@@ -185,7 +184,7 @@ GameThread()
 
   //  game init after physics init
   entt::registry r;
-  GameData game_data{ .r = r, .world_id = b2WorldId() };
+  GameData game_data{ .r = &r };
   game_code.game_init(&game_data);
 
   SDL_Log("(GameThread) -- done init");
@@ -260,7 +259,7 @@ GameThread()
       std::scoped_lock<std::mutex> lock0(wb.mtx);
 
       // copy transforms in to RenderData.
-      auto view = game_data.r.group<TransformComponent>();
+      auto view = game_data.r->view<TransformComponent>();
       wb.transforms.clear(); // should do something better than .clear()
       const auto get_comp = [](const auto& tuple) -> TransformComponent { return std::get<1>(tuple); };
       std::ranges::copy(view.each() | std::views::transform(get_comp), std::back_inserter(wb.transforms));
