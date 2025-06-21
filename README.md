@@ -114,8 +114,10 @@ For a more complete list see [.vscode/extensions.json](.vscode/extensions.json)
 ### Box2D
 
 Note: if using the dll hot reload, build box2d as a shared dll
+Note: run the build command in msvc developer prompt.
 
 ```
+cd thirdparty/box2d
 mkdir build
 cd build
 cmake -DBOX2D_SAMPLES=OFF -DBOX2D_UNIT_TESTS=OFF -DBUILD_SHARED_LIBS=ON .. -G Ninja

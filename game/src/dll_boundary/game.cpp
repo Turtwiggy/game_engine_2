@@ -1,29 +1,60 @@
 #include "game.hpp"
 
-#include "box2d/id.h"
 #include "common.hpp"
 #include "render_helpers.hpp"
+#include "singleton.hpp"
 
-#include "box2d/math_functions.h"
-#include "box2d/types.h"
-#include "entt/entity/fwd.hpp"
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_joystick.h>
 #include <SDL3/SDL_log.h>
+#include <algorithm>
 #include <box2d/box2d.h>
+#include <entt/fwd.hpp>
 #include <imgui.h>
+
+#include <chrono>
 
 namespace game2d {
 
 static entt::registry internal_r;
 static bool refreshed = false;
+
+static vec2 keyboard_l{ 0, 0 };
+static vec2 keyboard_r{ 0, 0 };
+static vec2 controller_l{ 0, 0 };
+static vec2 controller_r{ 0, 0 };
 static vec2 l_input{ 0, 0 };
 static vec2 r_input{ 0, 0 };
 static bool jump = false;
+const auto jump_force = b2Vec2{ 0.0f, -5.0f };
+const auto move_force = 0.5f;
+static b2Vec2 gravity = { 0.0f, 0.0f };
+
+const auto get_system_time_for_seed = []() -> int {
+  auto now = std::chrono::high_resolution_clock::now();
+  long long seed = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+  return seed;
+};
+
+struct OnCollisionEnter
+{
+  entt::entity a = entt::null;
+  entt::entity b = entt::null;
+};
+struct OnCollisionExit
+{
+  entt::entity a = entt::null;
+  entt::entity b = entt::null;
+};
 
 void
-spawn(GameData* data, vec2 pos, vec2 size, bool is_static = false)
+spawn(GameData* data,
+      const vec2 pos,
+      const vec2 size,
+      const ColourComponent colour,
+      const bool is_static = false,
+      const bool is_sensor = false)
 {
   auto& r = internal_r;
 
@@ -34,10 +65,15 @@ spawn(GameData* data, vec2 pos, vec2 size, bool is_static = false)
   bodyDef.type = is_static ? b2_staticBody : b2_dynamicBody;
   bodyDef.position = b2Vec2{ pixels_to_meters(pos) };
   bodyDef.fixedRotation = true;
-  b2BodyId body_id_0 = b2CreateBody(data->world_id, &bodyDef);
+  b2BodyId body_id = b2CreateBody(data->world_id, &bodyDef);
+
+  b2Body_SetLinearDamping(body_id, 5.0f);
 
   b2ShapeDef shapeDef = b2DefaultShapeDef();
-  b2CreatePolygonShape(body_id_0, &shapeDef, &box);
+  shapeDef.isSensor = is_sensor;
+  shapeDef.enableContactEvents = true;
+  shapeDef.enableSensorEvents = true;
+  b2CreatePolygonShape(body_id, &shapeDef, &box);
 
   TransformComponent t_c;
   t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
@@ -45,14 +81,30 @@ spawn(GameData* data, vec2 pos, vec2 size, bool is_static = false)
   entt::entity e = r.create();
   r.emplace<TransformComponent>(e, t_c);
 
-  static RandomState rnd(0);
-  float rnd_r = random(rnd, 0.0f, 1.0f);
-  float rnd_g = random(rnd, 0.0f, 1.0f);
-  float rnd_b = random(rnd, 0.0f, 1.0f);
-  r.emplace<ColourComponent>(e, ColourComponent{ .r = rnd_r, .g = rnd_r, .b = rnd_b });
+  int seed = 0;
+#if defined(_DEBUG)
+  seed = get_system_time_for_seed();
+#endif
+  // static RandomState rnd(seed);
+  // float rnd_r = random(rnd, 0.0f, 1.0f);
+  // float rnd_g = random(rnd, 0.0f, 1.0f);
+  // float rnd_b = random(rnd, 0.0f, 1.0f);
+  r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
 
-  r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id_0 });
+  r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id });
 };
+
+void
+handle_on_coll_enter__log(entt::registry& r, const OnCollisionEnter& coll_evt)
+{
+  SDL_Log("collision enter.");
+}
+
+void
+handle_on_coll_exit__log(entt::registry& r, const OnCollisionExit& coll_evt)
+{
+  SDL_Log("collision exit.");
+}
 
 void
 game_init(GameData* data)
@@ -73,13 +125,22 @@ game_init(GameData* data)
   // world_def.enqueueTask = EnqueueTask;
   // world_def.finishTask = FinishTask;
   // world_def.userTaskContext = s.get();
-  world_def.gravity = { 0.0f, 10.0f };
+  world_def.gravity = gravity;
   world_def.enableSleep = true;
   data->world_id = b2CreateWorld(&world_def);
 
-  spawn(data, { 300, 300 }, { 50, 50 });
-  spawn(data, { 900, 0 }, { 50, 50 });
-  spawn(data, { 1280 * 0.5f, 720 * 0.75f }, { 1000, 50 }, true);
+  spawn(data, { 300, 300 }, { 50, 50 }, { 1.0f, 0.0f, 0.0f });
+  spawn(data, { 900, 450 }, { 50, 50 }, { 0.0f, 1.0f, 0.0f });
+  // spawn(data, { 1280 * 0.5f, 720 * 0.75f }, { 1000, 50 }, true);
+
+  spawn(data, { 450, 450 }, { 50, 50 }, { 0.0f, 0.0f, 1.0f }, false, true);
+
+  // setup events
+  static entt::dispatcher dispatcher;
+  auto& evts_c = SINGLE_Events::get();
+  evts_c.dispatcher = &dispatcher;
+  evts_c.dispatcher->sink<OnCollisionEnter>().connect<&handle_on_coll_enter__log>(r);
+  evts_c.dispatcher->sink<OnCollisionExit>().connect<&handle_on_coll_exit__log>(r);
 };
 
 void
@@ -87,21 +148,92 @@ game_fixed_update(GameData* data)
 {
   auto& r = internal_r;
 
-  // apply force to physics objects
-  // for (const auto& [e, physics_c] : r.view<PhysicsBodyComponent>().each()) {
-  // }
+  // Apply force to first dynamic body
+  {
+    auto view = r.view<const PhysicsBodyComponent, const TransformComponent>();
+    for (const auto& [e, pb_c, t_c] : view.each()) {
+      const b2BodyType type = b2Body_GetType(pb_c.id);
+      if (type == b2_staticBody)
+        continue;
 
-  auto view = r.view<const PhysicsBodyComponent, const TransformComponent>();
-  for (const auto& [e, pb_c, t_c] : view.each()) {
-    const b2BodyType type = b2Body_GetType(pb_c.id);
-    if (type == b2_staticBody)
-      continue;
-    const auto meters_per_second = 0.1f;
-    const auto force = b2Body_GetMass(pb_c.id) * meters_per_second * b2Vec2{ l_input.x, l_input.y };
-    b2Body_ApplyLinearImpulseToCenter(pb_c.id, force, true);
+      // const auto meters_per_second = 0.1f;
+      const auto force = move_force * b2Vec2{ l_input.x, l_input.y };
+      b2Body_ApplyLinearImpulseToCenter(pb_c.id, force, true);
 
-    // apply force to first dynamic body
-    break;
+      break;
+    }
+  }
+
+  // Apply jump force
+  {
+    entt::entity first_dynamic_e = entt::null;
+    auto view = r.view<const PhysicsBodyComponent, const TransformComponent>();
+    for (const auto& [e, pb_c, t_c] : view.each()) {
+      const b2BodyType type = b2Body_GetType(pb_c.id);
+      if (type == b2_staticBody)
+        continue;
+      first_dynamic_e = e;
+      break;
+    }
+    if (first_dynamic_e != entt::null) {
+      if (jump) {
+        auto& pb_c = r.get<PhysicsBodyComponent>(first_dynamic_e);
+        b2Body_ApplyLinearImpulseToCenter(pb_c.id, jump_force, true);
+      }
+      jump = false;
+    }
+  }
+
+  // update world
+  {
+    constexpr int physics_substep_count = 4;
+    constexpr float physics_dt = 1.0f / 60.0f;
+    b2World_Step(data->world_id, physics_dt, physics_substep_count);
+  }
+
+  // Generate contact events.
+  {
+    const auto convert_box2d_coll_to_entt = [](entt::registry& r, const b2ShapeId a, const b2ShapeId b, auto callback) {
+      const auto fixture_eid_a = static_cast<entt::entity>((reinterpret_cast<uintptr_t>(b2Shape_GetUserData(a))));
+      const auto fixture_eid_b = static_cast<entt::entity>((reinterpret_cast<uintptr_t>(b2Shape_GetUserData(b))));
+      callback(fixture_eid_a, fixture_eid_b);
+    };
+    const b2ContactEvents c_events = b2World_GetContactEvents(data->world_id);
+    const b2SensorEvents s_events = b2World_GetSensorEvents(data->world_id);
+    auto& ui_data = data->ui_data;
+    ui_data.n_sensor_events = s_events.beginCount + s_events.endCount;
+    ui_data.n_contact_events = c_events.beginCount + c_events.endCount;
+
+    for (int i = 0; i < c_events.beginCount; ++i) {
+      b2ContactBeginTouchEvent* beginEvent = c_events.beginEvents + i;
+      convert_box2d_coll_to_entt(r, beginEvent->shapeIdA, beginEvent->shapeIdB, [&r](const auto e_a, const auto e_b) {
+        SINGLE_Events::get().dispatcher->trigger(OnCollisionEnter{ .a = e_a, .b = e_b });
+      });
+    }
+    for (int i = 0; i < c_events.endCount; ++i) {
+      b2ContactEndTouchEvent* endEvent = c_events.endEvents + i;
+      if (b2Shape_IsValid(endEvent->shapeIdA) && b2Shape_IsValid(endEvent->shapeIdB)) {
+        convert_box2d_coll_to_entt(r, endEvent->shapeIdA, endEvent->shapeIdB, [](const auto e_a, const auto e_b) {
+          SINGLE_Events::get().dispatcher->trigger(OnCollisionExit{ .a = e_a, .b = e_b });
+        });
+      }
+    }
+    for (int i = 0; i < s_events.beginCount; ++i) {
+      b2SensorBeginTouchEvent* beginEvent = s_events.beginEvents + i;
+      convert_box2d_coll_to_entt(
+        r, beginEvent->sensorShapeId, beginEvent->visitorShapeId, [&r](const auto e_a, const auto e_b) {
+          SINGLE_Events::get().dispatcher->trigger(OnCollisionEnter{ .a = e_a, .b = e_b });
+        });
+    }
+    for (int i = 0; i < s_events.endCount; ++i) {
+      b2SensorEndTouchEvent* endEvent = s_events.endEvents + i;
+      if (b2Shape_IsValid(endEvent->sensorShapeId) && b2Shape_IsValid(endEvent->visitorShapeId)) {
+        convert_box2d_coll_to_entt(r, endEvent->sensorShapeId, endEvent->visitorShapeId, [](const auto e_a, const auto e_b) {
+          SINGLE_Events::get().dispatcher->trigger(OnCollisionExit{ .a = e_a, .b = e_b });
+        });
+      }
+    }
+    SINGLE_Events::get().dispatcher->update();
   }
 };
 
@@ -124,6 +256,10 @@ game_update(GameData* data)
     return ((b - a) * (x - min)) / (max - min) + a;
   };
 
+  //
+  // input events
+  //
+
   for (const SDL_Event& evt : evts) {
     //
     // button events
@@ -136,15 +272,15 @@ game_update(GameData* data)
       SDL_Log("(GameThread)(GameUpdate) KeyDown %s %i %i", scancode_name, down, repeat);
 
       if (scancode == SDL_SCANCODE_W)
-        l_input.y = -1;
+        keyboard_l.y = -1;
       if (scancode == SDL_SCANCODE_S)
-        l_input.y = 1;
+        keyboard_l.y = 1;
       if (scancode == SDL_SCANCODE_A)
-        l_input.x = -1;
+        keyboard_l.x = -1;
       if (scancode == SDL_SCANCODE_D)
-        l_input.x = 1;
+        keyboard_l.x = 1;
       if (scancode == SDL_SCANCODE_KP_0)
-        spawn(data, data->mouse_pos, { 50, 50 });
+        spawn(data, data->mouse_pos, { 50, 50 }, { 1.0, 1.0, 1.0 });
       if (scancode == SDL_SCANCODE_SPACE)
         jump |= true;
     }
@@ -157,13 +293,13 @@ game_update(GameData* data)
       SDL_Log("(GameThread)(GameUpdate) KeyUp %s %i %i", scancode_name, down, repeat);
 
       if (scancode == SDL_SCANCODE_W)
-        l_input.y = 0;
+        keyboard_l.y = 0;
       if (scancode == SDL_SCANCODE_S)
-        l_input.y = 0;
+        keyboard_l.y = 0;
       if (scancode == SDL_SCANCODE_A)
-        l_input.x = 0;
+        keyboard_l.x = 0;
       if (scancode == SDL_SCANCODE_D)
-        l_input.x = 0;
+        keyboard_l.x = 0;
     }
     if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
       SDL_MouseButtonEvent m_evt = evt.button;
@@ -211,10 +347,12 @@ game_update(GameData* data)
     }
   }
 
+  auto& ui_data = data->ui_data;
+  ui_data.keyboard_l = keyboard_l;
+  ui_data.keyboard_r = keyboard_r;
+
   int n_joysticks = 0;
   auto* joysticks = SDL_GetJoysticks(&n_joysticks);
-
-  auto& ui_data = data->ui_data;
   ui_data.n_controllers = n_joysticks;
   ui_data.controller_l = { 0, 0 };
   ui_data.controller_r = { 0, 0 };
@@ -232,9 +370,10 @@ game_update(GameData* data)
     const auto ly_nrm = scale(ly_raw, -32768, 32767, -1.0f, 1.0f);
     const auto rx_nrm = scale(rx_raw, -32768, 32767, -1.0f, 1.0f);
     const auto ry_nrm = scale(ry_raw, -32768, 32767, -1.0f, 1.0f);
-
-    l_input = { lx_nrm, ly_nrm };
-    r_input = { rx_nrm, ry_nrm };
+    const vec2 inp_l = vec2{ lx_nrm, ly_nrm };
+    const vec2 inp_r = vec2{ rx_nrm, ry_nrm };
+    controller_l = inp_l;
+    controller_r = inp_r;
 
     // generate inputs for one button.
     static bool s_press = false;
@@ -261,30 +400,21 @@ game_update(GameData* data)
     break;
   }
 
-  entt::entity first_dynamic_e = entt::null;
-  {
-    auto view = r.view<const PhysicsBodyComponent, const TransformComponent>();
-    for (const auto& [e, pb_c, t_c] : view.each()) {
-      const b2BodyType type = b2Body_GetType(pb_c.id);
-      if (type == b2_staticBody)
-        continue;
-      first_dynamic_e = e;
-      break;
-    }
-  }
+  l_input = keyboard_l + controller_l;
+  r_input = keyboard_r + controller_r;
 
-  if (first_dynamic_e != entt::null) {
-    // Apply jump force
-    // Note: this should be being applied in fixed update not update
-    if (jump) {
-      auto& pb_c = r.get<PhysicsBodyComponent>(first_dynamic_e);
-      b2Body_ApplyLinearImpulseToCenter(pb_c.id, { 0, -10 }, true);
-    }
-    jump = false;
-  }
+  // clamp the inputs
+  l_input.x = std::clamp(l_input.x, -1.0f, 1.0f);
+  l_input.y = std::clamp(l_input.y, -1.0f, 1.0f);
+  r_input.x = std::clamp(r_input.x, -1.0f, 1.0f);
+  r_input.y = std::clamp(r_input.y, -1.0f, 1.0f);
 
   // Update transforms via physics body.
   update_transforms_from_physics(r);
+
+  // update_events_system()
+  auto& events_c = SINGLE_Events::get();
+  events_c.dispatcher->update();
 };
 
 void
@@ -300,6 +430,8 @@ game_update_ui(GameUIData* ui_data)
   ImGui::Begin("SomeOtherCrazyWindow", nullptr, flags);
   ImGui::Text("(GameThread) FPS: %0.2f", 1.0f / data.game_dt);
   ImGui::Text("(RenderThread) FPS: %0.2f", ImGui::GetIO().Framerate);
+  ImGui::Text("contact events: %i", data.n_contact_events);
+  ImGui::Text("sensor events: %i", data.n_sensor_events);
   ImGui::End();
 
   // int controllers = 0;
@@ -307,6 +439,10 @@ game_update_ui(GameUIData* ui_data)
   // ImGui::Text("n_controllers: %i", controllers);
 
   ImGui::Begin("SomeOtherWindow", nullptr, flags);
+
+  ImGui::Text("Keyboard");
+  ImGui::Text("%f %f %f %f", data.keyboard_l.x, data.keyboard_l.y, data.keyboard_r.x, data.keyboard_r.y);
+
   ImGui::Text("Controllers");
 
   ImGui::Text("%i %f %f %f %f",
@@ -315,6 +451,9 @@ game_update_ui(GameUIData* ui_data)
               data.controller_l.y,
               data.controller_r.x,
               data.controller_r.y);
+
+  ImGui::Text("Input");
+  ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
 
   ImGui::End();
 };

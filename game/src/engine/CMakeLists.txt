@@ -21,18 +21,18 @@ message("game: CMAKE_TOOLCHAIN_FILE: ${CMAKE_TOOLCHAIN_FILE}")
 # include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-msvc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/use-compiler-gcc.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/build_misc.cmake)
 
-# TODO: be able to compile as one static .exe when HOT_RELOAD 0
+# TODO: compile as one static .exe when HOT_RELOAD 0
 set(HOT_RELOAD 1)
 
-#
 find_packages()
 find_package(Tracy CONFIG REQUIRED)
 
 FetchContent_Declare(
   tracy
   GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-  GIT_TAG v0.11.1
+  GIT_TAG v0.12.1
   GIT_SHALLOW TRUE
   GIT_PROGRESS TRUE
 )
@@ -62,6 +62,11 @@ endif()
 link_libs(game)
 target_link_libraries(game PUBLIC TracyClient)
 
+set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
+set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2d.dll)
+message("searching for box2d at... ${BOX2D_LIB}")
+target_link_libraries(game PRIVATE ${BOX2D_LIB})
+
 # Build GameDLL
 # note: at some point, I think my plan was to create another cmake project.
 # the problem is that GameDLL.dll is always linked because I link the .lib.
@@ -74,51 +79,7 @@ set(LIB_SRC ${CMAKE_SOURCE_DIR}/build/game/src/dll_boundary/GameDLL.lib)
 message("searching for .dll at... ${LIB_SRC}")
 target_link_libraries(game PRIVATE ${LIB_SRC})
 
-# Copy box2d dll to game
-set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
-message("searching for box2d at... ${BOX2D_LIB}")
-target_link_libraries(game PRIVATE ${BOX2D_LIB})
-
-# Copy dll to GameDLL-hot-unlocked.dll
-# Copy dll to GameDLL.dll
-if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
-  message("copying game.dll needs copying...")
-  add_custom_target(do_always_copy_dll ALL
-    COMMAND ${CMAKE_COMMAND} -E remove
-    "$<TARGET_FILE_DIR:game>/$<TARGET_FILE_NAME:GameDLL>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "$<TARGET_FILE:GameDLL>"
-    "$<TARGET_FILE_DIR:game>"
-  )
-  add_custom_target(do_always_copy_dll_hot_unlocked ALL
-    COMMAND ${CMAKE_COMMAND} -E remove
-    "$<TARGET_FILE_DIR:game>/$<TARGET_FILE_NAME:GameDLL>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "$<TARGET_FILE:GameDLL>"
-    ${CMAKE_CURRENT_BINARY_DIR}/GameDLL-hot-unlocked.dll
-  )
-endif()
-
-# Link steam api
-# if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
-# # Link steam_api[64].lib
-# set(steam_lib ${CMAKE_SOURCE_DIR}/thirdparty/sdk/redistributable_bin/win64)
-# target_link_libraries(game PRIVATE ${steam_lib}/steam_api64.lib)
-# # Copy the .dll next to the .exe
-# if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/steam_api64.dll")
-# message("Copying steam .dll next to .exe")
-# set(dst ${CMAKE_CURRENT_BINARY_DIR})
-# add_custom_command(TARGET game POST_BUILD
-# COMMAND ${CMAKE_COMMAND} -E copy
-# ${steam_lib}/steam_api64.dll
-# $<TARGET_FILE_DIR:game>
-# )
-# endif()
-# endif()
-#
 target_include_directories(game PRIVATE
-
-  # ${CMAKE_SOURCE_DIR}/thirdparty/magic_enum
   ${IMGUI_INCLUDES}
   ${Stb_INCLUDE_DIR}
   ${VCPKG_INCLUDES}
@@ -172,43 +133,18 @@ ENDIF()
 # copy over the /assets folder in the release mode,
 # and would fail if this symlink was created here.
 if(${CMAKE_BUILD_TYPE} MATCHES Debug)
-  message("creating symlink...")
-  set(src ${CMAKE_SOURCE_DIR}/game/assets)
-  set(dst ${CMAKE_CURRENT_BINARY_DIR}/assets)
-
-  message("creating symlink src... ${src}")
-  message("creating symlink dst... ${dst}")
-
-  if(UNIX)
-    message("creating symlink... (unix)")
-    add_custom_command(
-      TARGET ${PROJECT_NAME} PRE_BUILD
-      COMMAND ${CMAKE_COMMAND} -E create_symlink ${src} ${dst}
-      DEPENDS ${dst_sym}
-      COMMENT "symbolic link resources folder from ${src} => ${dst}"
-    )
-  else()
-    message("creating symlink... (windows)")
-    file(TO_NATIVE_PATH "${src}" _srcDir)
-    file(TO_NATIVE_PATH "${dst}" _dstDir)
-    message("dst: ${_dstDir}")
-
-    if(NOT EXISTS ${_dstDir})
-      # https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/mklink
-      # mklink [[/d] | [/h] | [/j]] <link> <target>
-      # <link>	Specifies the name of the symbolic link being created.
-      # <target>	Specifies the path (relative or absolute) that the new symbolic link refers to.
-      #
-      add_custom_command(
-        TARGET ${PROJECT_NAME} PRE_BUILD
-        COMMAND cmd.exe /c mklink /D "${_dstDir}" "${_srcDir}"
-        COMMENT "Creating symlink on Windows"
-      )
-    ELSE()
-      message("creating symlink... (already exists)")
-    ENDIF()
-  ENDIF()
+  create_symlinks(game)
 ENDIF()
+
+# Copy dll to GameDLL-hot-unlocked.dll
+# Copy dll to GameDLL.dll
+if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
+  message("copying game.dll...")
+  set(BUILT_DLL "${CMAKE_SOURCE_DIR}/build/game/src/dll_boundary/GameDLL.dll")
+  copy_file_next_to_exe(game "${BUILT_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/GameDLL.dll")
+  copy_file_next_to_exe(game "${BUILT_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/GameDLL-hot-unlocked.dll")
+  copy_file_next_to_exe(game "${BOX2D_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/box2d.dll")
+endif()
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})

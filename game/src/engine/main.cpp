@@ -178,6 +178,7 @@ GameThread()
   // physics innit
   const auto logical_cpu_cores = SDL_GetNumLogicalCPUCores();
   SDL_Log("LogicalCPUCores: %i", logical_cpu_cores);
+
   // threads used (main, game, render)
   // const int used_threads = 3;
   // const int max_thread_count = std::max(1, logical_cpu_cores - used_threads);
@@ -228,7 +229,7 @@ GameThread()
         }
       }
 
-      b2World_Step(game_data.world_id, physics_dt, physics_substep_count);
+      // b2World_Step(game_data.world_id, physics_dt, physics_substep_count);
       // s->m_taskCount = 0;
     }
 
@@ -267,7 +268,7 @@ GameThread()
       wb.renderable.clear(); // should do something better than .clear()
 
       // copy transforms in to RenderData.
-      auto view = game_data.r->group<const TransformComponent, const ColourComponent>();
+      auto view = game_data.r->view<const TransformComponent, const ColourComponent>();
       view.each([&](entt::entity e, const auto& t_c, const auto& col_c) {
         wb.renderable.push_back(Renderable{
           .transform = t_c,
@@ -1027,8 +1028,9 @@ main(int argc, char* argv[])
       const auto cmd = std::format("{}", full_path);
       const int result = std::system(cmd.c_str());
 
-      if (result != 0)
+      if (result != 0) {
         SDL_Log("Build failed...");
+      }
 
       if (result == 0) {
         SDL_Log("Build success...");

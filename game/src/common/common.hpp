@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dll.hpp"
+
 #include "box2d/id.h"
 #include <SDL3/SDL.h>
 #include <box2d/box2d.h>
@@ -10,21 +12,15 @@
 
 namespace game2d {
 
-//
 // some sort of shared file with the engine.
 //
-
-#if defined(DLL_EXPORTS)
-#define DLL_API __declspec(dllexport)
-#else
-#define DLL_API __declspec(dllimport)
-#endif
 
 struct DLL_API vec2
 {
   float x = 0.0;
   float y = 0.0;
 
+  vec2 operator+(const vec2& other) const;
   vec2 operator-(const vec2& other) const;
   vec2 operator*(const vec2& other) const;
   vec2 operator/(const vec2& other) const;
@@ -104,8 +100,14 @@ struct DLL_API CommonUiData
   // data to show in UI
   float game_dt = 0.0f;
   int n_controllers = 0;
+
+  vec2 keyboard_l{ 0, 0 };
+  vec2 keyboard_r{ 0, 0 };
   vec2 controller_l{ 0, 0 };
   vec2 controller_r{ 0, 0 };
+
+  int n_contact_events = 0;
+  int n_sensor_events = 0;
 
   // std::vector<std::pair<std::string, std::string>> something;
 };
@@ -113,6 +115,7 @@ struct DLL_API CommonUiData
 struct DLL_API GameData
 {
   entt::registry* r = nullptr;
+
   b2WorldId world_id;
 
   vec2 mouse_pos{ 0, 0 };
