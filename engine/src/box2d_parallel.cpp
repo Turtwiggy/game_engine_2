@@ -1,3 +1,5 @@
+#include "core/pch.hpp"
+
 #include "box2d_parallel.hpp"
 
 namespace game2d {

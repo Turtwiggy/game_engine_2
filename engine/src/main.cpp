@@ -1,50 +1,13 @@
+#include "core/pch.hpp"
 
-#include "common.hpp"
+// #include "box2d_parallel.hpp"
+#include "core/common.hpp"
 #include "sdl_exception.hpp"
 #include "sdl_hot_reload_dll.hpp"
 #include "sdl_shader.hpp"
 #include "sdl_surface.hpp"
 #include "threadsafe_queue.hpp"
-#include <shared_mutex>
 using namespace game2d;
-
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_cpuinfo.h>
-#include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_gpu.h>
-#include <SDL3/SDL_init.h>
-#include <SDL3/SDL_iostream.h>
-#include <SDL3/SDL_joystick.h>
-#include <SDL3/SDL_loadso.h>
-#include <SDL3/SDL_stdinc.h>
-#include <SDL3/SDL_timer.h>
-
-// #include "box2d_parallel.hpp"
-#include <box2d/box2d.h>
-#include <box2d/id.h>
-#include <entt/entt.hpp>
-
-#if !defined(TRACY_ENABLE)
-#define TRACY_ENABLE
-#define TRACY_CALLSTACK
-#endif
-#include <tracy/Tracy.hpp>
-
-// #include <backends/imgui_impl_vulkan.h>
-#include "backends/imgui_impl_sdl3.h"
-#include "backends/imgui_impl_sdlgpu3.h"
-#include <imgui.h>
-
-#include <algorithm>
-#include <atomic>
-#include <cstddef>
-#include <cstdint>
-#include <format>
-#include <mutex>
-#include <ranges>
-#include <stdexcept>
-#include <thread>
-#include <vector>
 
 // clang-format off
 
@@ -67,35 +30,7 @@ using namespace game2d;
 // ui sdf rendering: https://github.com/SaschaWillems/Vulkan/tree/master/examples/distancefieldfonts
 // effects: radial blur: https://github.com/SaschaWillems/Vulkan/blob/master/examples/radialblur/radialblur.cpp
 // effects: bloom: https://github.com/SaschaWillems/Vulkan/tree/master/examples/bloom
-
 // https://github.com/TheSpydog/SDL_gpu_examples
-
-// What it takes to draw a triangle.
-// 1. Physical device selection
-// 2. Logical device and queue families
-// 3. Window surface and swap chain
-// 4. Image views and framebuffers
-// 5. Render passes
-// 6. Graphics pipeline
-// 7. Command pools and command buffers
-// 8. Main Loop
-
-// VkInstance: The Vulkan context, used to access drivers.
-// VkPhysicalDevice: A GPU. Used to query physical GPU details, like features, capabilities, memory size, etc.
-// VkDevice: The “logical” GPU context that you actually execute things on.
-// VkBuffer: A chunk of GPU visible memory.
-// VkImage: A texture you can write to and read from.
-// VkPipeline: Holds the state of the gpu needed to draw. For example: shaders, rasterization options, depth settings.
-// VkRenderPass: Holds information about the images you are rendering into. All drawing commands have to be done inside a renderpass. Only used in legacy vkguide
-// VkFrameBuffer: Holds the target images for a renderpass. Only used in legacy vkguide
-// VkCommandBuffer: Encodes GPU commands. All execution that is performed on the GPU itself (not in the driver) has to be encoded in a VkCommandBuffer.
-// VkQueue: Execution “port” for commands. GPUs will have a set of queues with different properties. Some allow only graphics commands, others only allow memory commands, etc. Command buffers are executed by submitting them into a queue, which will copy the rendering commands onto the GPU for execution.
-// VkDescriptorSet: Holds the binding information that connects shader inputs to data such as VkBuffer resources and VkImage textures. Think of it as a set of gpu-side pointers that you bind once.
-// VkSwapchainKHR: Holds the images for the screen. It allows you to render things into a visible window. The KHR suffix shows that it comes from an extension, which in this case is VK_KHR_swapchain
-// VkSemaphore: Synchronizes GPU to GPU execution of commands. Used for syncing multiple command buffer submissions one after other.
-// VkFence: Synchronizes GPU to CPU execution of commands. Used to know if a command buffer has finished being executed on the GPU.
-
-// clang-format on
 
 // Goals:
 // SDL3; input (keyboard) & audio
@@ -111,22 +46,6 @@ static bool limit_fps = false;
 static int fps_limit = 240;
 constexpr int SDL_WINDOW_WIDTH = 1280;
 constexpr int SDL_WINDOW_HEIGHT = 720;
-
-struct Renderable
-{
-  TransformComponent transform;
-  ColourComponent colour;
-};
-
-struct RenderData
-{
-  std::mutex mtx; // mutex to protect access to data
-
-  // data
-  std::vector<Renderable> renderable;
-
-  CommonUiData ui_data;
-};
 
 //
 // idea:
@@ -147,7 +66,7 @@ void SwapBuffers() {current_read_buffer.store(1 - current_read_buffer.load(), st
 std::mutex game_ui_mtx; // lock when update, not read?
 GameUIData game_ui_data;
 
-std::shared_mutex rebuild_dll_mtx;
+std::mutex rebuild_dll_mtx;
 sdl_game_code game_code;
 
 // clang-format on
@@ -203,7 +122,8 @@ GameThread()
     static Uint64 game_past = 0;
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
-    const float dt = 1e-9 * (float)dt_ns;
+    const float dt = (float)(1e-9 * (float)dt_ns);
+    game_data.dt = dt;
 
     // pop all the events at once from a thread-safe buffer.
     {
@@ -215,14 +135,14 @@ GameThread()
     static Uint64 accu = 0;
     constexpr int physics_substep_count = 4;
     constexpr float physics_dt = 1.0f / 60.0f;
-    constexpr Uint64 NS_PER_FIXED_TICK = 1e9 / 60.0f;
+    constexpr Uint64 NS_PER_FIXED_TICK = (Uint64)(1e9 / 60.0);
     accu += dt_ns;
     while (accu >= NS_PER_FIXED_TICK) {
       accu -= NS_PER_FIXED_TICK;
 
       // FixedUpdate()
       {
-        std::shared_lock lock(rebuild_dll_mtx);
+        std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
         if (game_code.valid) {
           ZoneScopedN("(GameThread) game_fixed_update()");
           game_code.game_fixed_update(&game_data);
@@ -234,41 +154,48 @@ GameThread()
     }
 
     // Events()
+
+    bool rebuild = false;
+
     for (const auto& evt : game_data.events) {
       if (evt.type == SDL_EVENT_KEY_DOWN) {
         const auto scancode = evt.key.scancode;
-        if (scancode == SDL_SCANCODE_9) {
-          {
-            std::shared_lock lock(rebuild_dll_mtx);
-            SDL_Log("(GameThread) game_refresh()");
-            if (game_code.valid) {
-              game_code.game_refresh(&game_data);
-              game_code.game_init(&game_data);
-            }
-          }
-        }
+        if (scancode == SDL_SCANCODE_9)
+          rebuild = true;
+      }
+    }
+
+    if (rebuild || game_code.rebuilt) {
+      std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
+      SDL_Log("(GameThread) game_refresh()");
+      if (game_code.valid) {
+        game_code.game_refresh(&game_data);
+        game_code.game_init(&game_data);
+        game_code.rebuilt = false;
       }
     }
 
     // GameUpdate()
     {
       ZoneScopedN("(GameThread) game_update()");
-      std::shared_lock lock(rebuild_dll_mtx);
+      std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
       if (game_code.valid)
         game_code.game_update(&game_data);
     }
 
-    // Ding ding! frame done. UpdateRenderData
+    // Ding ding! frame done. Update RenderData
     const int write_buffer_index = 1 - current_read_buffer.load(std::memory_order_acquire);
     RenderData& wb = rend_data[write_buffer_index];
     {
       ZoneScopedN("(GameThread) game_update_write()");
       std::scoped_lock<std::mutex> lock0(wb.mtx);
 
-      wb.renderable.clear(); // should do something better than .clear()
+      // should do something better than .clear()
+      wb.renderable.clear();
+      wb.ui_data.hmm.clear();
 
       // copy transforms in to RenderData.
-      auto view = game_data.r->view<const TransformComponent, const ColourComponent>();
+      const auto view = game_data.r->group<const TransformComponent, const ColourComponent>();
       view.each([&](entt::entity e, const auto& t_c, const auto& col_c) {
         wb.renderable.push_back(Renderable{
           .transform = t_c,
@@ -277,8 +204,10 @@ GameThread()
       });
 
       // copy anything else in to renderdata buffer.
+      wb.camera_pos = game_data.camera_pos;
       wb.ui_data = game_data.ui_data;
       wb.ui_data.game_dt = dt;
+      // wb.ui_data.hmm = game_data.ui_data.hmm;
     }
 
     SwapBuffers();
@@ -353,6 +282,33 @@ typedef struct Matrix4x4
   float m41, m42, m43, m44;
 } Matrix4x4;
 
+// Matrix multiplication operator for Matrix4x4
+Matrix4x4
+operator*(const Matrix4x4& a, const Matrix4x4& b)
+{
+  Matrix4x4 result;
+  result.m11 = a.m11 * b.m11 + a.m12 * b.m21 + a.m13 * b.m31 + a.m14 * b.m41;
+  result.m12 = a.m11 * b.m12 + a.m12 * b.m22 + a.m13 * b.m32 + a.m14 * b.m42;
+  result.m13 = a.m11 * b.m13 + a.m12 * b.m23 + a.m13 * b.m33 + a.m14 * b.m43;
+  result.m14 = a.m11 * b.m14 + a.m12 * b.m24 + a.m13 * b.m34 + a.m14 * b.m44;
+
+  result.m21 = a.m21 * b.m11 + a.m22 * b.m21 + a.m23 * b.m31 + a.m24 * b.m41;
+  result.m22 = a.m21 * b.m12 + a.m22 * b.m22 + a.m23 * b.m32 + a.m24 * b.m42;
+  result.m23 = a.m21 * b.m13 + a.m22 * b.m23 + a.m23 * b.m33 + a.m24 * b.m43;
+  result.m24 = a.m21 * b.m14 + a.m22 * b.m24 + a.m23 * b.m34 + a.m24 * b.m44;
+
+  result.m31 = a.m31 * b.m11 + a.m32 * b.m21 + a.m33 * b.m31 + a.m34 * b.m41;
+  result.m32 = a.m31 * b.m12 + a.m32 * b.m22 + a.m33 * b.m32 + a.m34 * b.m42;
+  result.m33 = a.m31 * b.m13 + a.m32 * b.m23 + a.m33 * b.m33 + a.m34 * b.m43;
+  result.m34 = a.m31 * b.m14 + a.m32 * b.m24 + a.m33 * b.m34 + a.m34 * b.m44;
+
+  result.m41 = a.m41 * b.m11 + a.m42 * b.m21 + a.m43 * b.m31 + a.m44 * b.m41;
+  result.m42 = a.m41 * b.m12 + a.m42 * b.m22 + a.m43 * b.m32 + a.m44 * b.m42;
+  result.m43 = a.m41 * b.m13 + a.m42 * b.m23 + a.m43 * b.m33 + a.m44 * b.m43;
+  result.m44 = a.m41 * b.m14 + a.m42 * b.m24 + a.m43 * b.m34 + a.m44 * b.m44;
+  return result;
+};
+
 Matrix4x4
 Matrix4x4_CreateOrthographicOffCenter(float left, float right, float bottom, float top, float zNearPlane, float zFarPlane)
 {
@@ -366,6 +322,27 @@ Matrix4x4_CreateOrthographicOffCenter(float left, float right, float bottom, flo
   // clang-format on
 }
 
+Matrix4x4
+Matrix4x4_CreateView(vec2 pos)
+{
+  // translate identity by position.
+  // then glm::inverse
+  // clang-format off
+  Matrix4x4 view = {
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    pos.x, pos.y, 0, 1
+  };
+  return Matrix4x4{
+    view.m11, view.m21, view.m31, 0,
+    view.m12, view.m22, view.m32, 0,
+    view.m13, view.m23, view.m33, 0,
+    -(view.m11 * pos.x + view.m12 * pos.y), -(view.m21 * pos.x + view.m22 * pos.y), 0, 1
+  };
+  // clang-format on
+}
+
 void
 RenderThread()
 {
@@ -375,7 +352,7 @@ RenderThread()
   game2d::InitializeAssetLoader();
 
   const uint32_t SPRITE_COUNT = 8192;
-  const Matrix4x4 cameraMatrix = Matrix4x4_CreateOrthographicOffCenter(0, 1280, 720, 0, 0, -1);
+  const Matrix4x4 camera_proj = Matrix4x4_CreateOrthographicOffCenter(0, 1280, 720, 0, 0, -1);
 
   SDL_GPUPresentMode present_mode = SDL_GPU_PRESENTMODE_VSYNC;
   if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_IMMEDIATE))
@@ -686,19 +663,20 @@ RenderThread()
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
 
+    // handoff: game thread pusning data in to gameuidata
     // note: this doubles the memory,
     // because its copying the entire RenderData
     auto& read_buffer = GetReadBuffer();
-    RenderData rd;
     {
       ZoneScopedN("(RenderThread) read_buffer_copy");
       std::scoped_lock<std::mutex> lock(read_buffer.mtx);
 
-      // take a copy
-      rd.renderable = read_buffer.renderable;
+      game_ui_data.renderable = read_buffer.renderable; // take a copy
       game_ui_data.ui_data = read_buffer.ui_data;
+      game_ui_data.camera_pos = read_buffer.camera_pos;
     }
-    const auto& renderables = rd.renderable;
+    const auto& renderables = game_ui_data.renderable;
+    const Matrix4x4 camera_view = Matrix4x4_CreateView(game_ui_data.camera_pos);
 
     // Start the Dear ImGui frame
     ImGui_ImplSDLGPU3_NewFrame();
@@ -708,7 +686,7 @@ RenderThread()
     ImGui::ShowDemoWindow(NULL);
 
     {
-      std::shared_lock lock(rebuild_dll_mtx);
+      std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
       if (game_code.valid) {
         ZoneScopedN("(RenderThread) game_update_ui()");
         game_code.game_update_ui(&game_ui_data);
@@ -824,7 +802,8 @@ RenderThread()
         const SDL_GPUTextureSamplerBinding tex_sampler_binding = { .texture = Texture, .sampler = sampler };
         SDL_BindGPUFragmentSamplers(render_pass, 0, &tex_sampler_binding, 1);
 
-        SDL_PushGPUVertexUniformData(cmd_buf, 0, &cameraMatrix, sizeof(Matrix4x4));
+        const auto view_projection = camera_view * camera_proj;
+        SDL_PushGPUVertexUniformData(cmd_buf, 0, &view_projection, sizeof(Matrix4x4));
 
         SDL_DrawGPUPrimitives(render_pass, SPRITE_COUNT * 6, 1, 0, 0);
         // SDL_DrawGPUIndexedPrimitives(render_pass, index_data.size(), 1, 0, 0, 0);
@@ -1004,6 +983,8 @@ main(int argc, char* argv[])
           const auto scancode = evt.key.scancode;
           if (scancode == SDL_SCANCODE_9)
             rebuild_dll = true;
+          if (scancode == SDL_SCANCODE_ESCAPE)
+            running = false;
         }
 
         evts.push_back(evt);
@@ -1015,10 +996,12 @@ main(int argc, char* argv[])
 
     // Call SDL_GetMouseState on main thread.
     SDL_GetMouseState(&mouse_pos.x, &mouse_pos.y);
+    // SDL_GetWindowSize(&window);
 
     // Rebuild the dll
     if (rebuild_dll) {
       std::unique_lock lock(rebuild_dll_mtx);
+      // game_code.valid = false;
 
       SDL_Log("Rebuild dll...");
 
@@ -1036,6 +1019,7 @@ main(int argc, char* argv[])
         SDL_Log("Build success...");
         sdl_unload_game_code(&game_code);
         game_code = sdl_load_game_code(src_dll, dst_dll);
+        game_code.rebuilt = true;
       }
     }
 

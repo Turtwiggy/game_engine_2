@@ -1,25 +1,23 @@
+#include "core/pch.hpp"
+
 #include "game.hpp"
 
-#include "common.hpp"
+#include "actors/actor_player/actor_player_components.hpp"
+#include "core/box2d/box2d_components.hpp"
+#include "core/box2d/box2d_helpers.hpp"
+#include "core/camera/camera_helpers.hpp"
+#include "core/common.hpp"
+#include "core/singleton.hpp"
 #include "render_helpers.hpp"
-#include "singleton.hpp"
-
-#include <SDL3/SDL_events.h>
-#include <SDL3/SDL_gamepad.h>
-#include <SDL3/SDL_joystick.h>
-#include <SDL3/SDL_log.h>
-#include <algorithm>
-#include <box2d/box2d.h>
-#include <entt/fwd.hpp>
-#include <imgui.h>
-
-#include <chrono>
+#include "systems/system_items/items_components.hpp"
 
 namespace game2d {
 
 static entt::registry internal_r;
 static bool refreshed = false;
+const auto screen_size = vec2(1280, 720); // todo: fix this
 
+static vec2 camera_pos{ 0, 0 };
 static vec2 keyboard_l{ 0, 0 };
 static vec2 keyboard_r{ 0, 0 };
 static vec2 controller_l{ 0, 0 };
@@ -27,6 +25,7 @@ static vec2 controller_r{ 0, 0 };
 static vec2 l_input{ 0, 0 };
 static vec2 r_input{ 0, 0 };
 static bool jump = false;
+static bool pickup = false;
 const auto jump_force = b2Vec2{ 0.0f, -5.0f };
 const auto move_force = 0.5f;
 static b2Vec2 gravity = { 0.0f, 0.0f };
@@ -37,18 +36,7 @@ const auto get_system_time_for_seed = []() -> int {
   return seed;
 };
 
-struct OnCollisionEnter
-{
-  entt::entity a = entt::null;
-  entt::entity b = entt::null;
-};
-struct OnCollisionExit
-{
-  entt::entity a = entt::null;
-  entt::entity b = entt::null;
-};
-
-void
+entt::entity
 spawn(GameData* data,
       const vec2 pos,
       const vec2 size,
@@ -73,31 +61,70 @@ spawn(GameData* data,
   shapeDef.isSensor = is_sensor;
   shapeDef.enableContactEvents = true;
   shapeDef.enableSensorEvents = true;
-  b2CreatePolygonShape(body_id, &shapeDef, &box);
+  b2ShapeId shape_id = b2CreatePolygonShape(body_id, &shapeDef, &box);
 
   TransformComponent t_c;
   t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
   t_c.size = meters_to_pixels(size_meters);
-  entt::entity e = r.create();
-  r.emplace<TransformComponent>(e, t_c);
 
   int seed = 0;
 #if defined(_DEBUG)
   seed = get_system_time_for_seed();
 #endif
-  // static RandomState rnd(seed);
+  static RandomState rnd(seed);
+
   // float rnd_r = random(rnd, 0.0f, 1.0f);
   // float rnd_g = random(rnd, 0.0f, 1.0f);
   // float rnd_b = random(rnd, 0.0f, 1.0f);
-  r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
 
-  r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ body_id });
+  entt::entity e = r.create();
+  r.emplace<TransformComponent>(e, t_c);
+  r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
+  r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ .id = body_id, .shape_ids = { shape_id } });
+  set_entity_from_body_id(body_id, e);
+  r.emplace<InventoryComponent>(e, InventoryComponent{ .items = (int)random(rnd, 0.0f, 100.0f) });
+
+  entt::entity shape_e = r.create();
+  r.emplace<PhysicsShapeComponent>(shape_e, PhysicsShapeComponent{ .body_id = body_id, .shape_id = shape_id });
+  set_entity_from_shape_id(shape_id, shape_e);
+
+  return e;
 };
 
 void
-handle_on_coll_enter__log(entt::registry& r, const OnCollisionEnter& coll_evt)
+handle_on_coll_enter__log(entt::registry& r, const OnCollisionEnter& evt)
 {
-  SDL_Log("collision enter.");
+  const auto parent_a_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_a).body_id);
+  const auto parent_b_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_b).body_id);
+
+  SDL_Log("collision enter. s_eid: %i par_eid: %i, s_eid: %i, par_eid: %i ",
+          (uint32_t)evt.shape_a,
+          parent_a_e,
+          (uint32_t)evt.shape_b,
+          parent_b_e);
+
+  {
+    const auto [shape_a, shape_b] = coll<const PlayerComponent, const ContainerProviderComponent>(r, parent_a_e, parent_b_e);
+    if (shape_a != entt::null && shape_b != entt::null) {
+      SDL_Log("collision enter with provider.");
+
+      // auto player_body_c = r.get<PhysicsBodyComponent>(shape_a);
+      // auto* body_data = b2Body_GetUserData(player_body_c.id);
+
+      auto& player_inv = r.get<InventoryComponent>(parent_a_e);
+      player_inv.items++;
+    }
+  }
+
+  {
+    const auto [shape_a, shape_b] = coll<const PlayerComponent, const ContainerReceiverComponent>(r, parent_a_e, parent_b_e);
+    if (shape_a != entt::null && shape_b != entt::null) {
+      SDL_Log("collision enter with reciever.");
+
+      auto& player_inv = r.get<InventoryComponent>(parent_a_e);
+      player_inv.items--;
+    }
+  }
 }
 
 void
@@ -129,18 +156,20 @@ game_init(GameData* data)
   world_def.enableSleep = true;
   data->world_id = b2CreateWorld(&world_def);
 
-  spawn(data, { 300, 300 }, { 50, 50 }, { 1.0f, 0.0f, 0.0f });
-  spawn(data, { 900, 450 }, { 50, 50 }, { 0.0f, 1.0f, 0.0f });
-  // spawn(data, { 1280 * 0.5f, 720 * 0.75f }, { 1000, 50 }, true);
+  // spawn(data, { 1280 * 0.5f, 720 * 0.75f }, { 1000, 50 }, true); // static
+  const auto provider_e = spawn(data, { 300, 300 }, { 50, 50 }, { 1.0f, 0.0f, 0.0f });
+  r.emplace<ContainerProviderComponent>(provider_e);
 
-  spawn(data, { 450, 450 }, { 50, 50 }, { 0.0f, 0.0f, 1.0f }, false, true);
+  const auto consumer_e = spawn(data, { 900, 450 }, { 50, 50 }, { 0.0f, 1.0f, 0.0f });
+  r.emplace<ContainerReceiverComponent>(consumer_e);
+
+  const auto player_e = spawn(data, { 450, 450 }, { 50, 50 }, { 0.0f, 0.0f, 1.0f }, false, true);
+  r.emplace<PlayerComponent>(player_e);
 
   // setup events
-  static entt::dispatcher dispatcher;
   auto& evts_c = SINGLE_Events::get();
-  evts_c.dispatcher = &dispatcher;
-  evts_c.dispatcher->sink<OnCollisionEnter>().connect<&handle_on_coll_enter__log>(r);
-  evts_c.dispatcher->sink<OnCollisionExit>().connect<&handle_on_coll_exit__log>(r);
+  evts_c.dispatcher.sink<OnCollisionEnter>().connect<&handle_on_coll_enter__log>(r);
+  evts_c.dispatcher.sink<OnCollisionExit>().connect<&handle_on_coll_exit__log>(r);
 };
 
 void
@@ -193,11 +222,16 @@ game_fixed_update(GameData* data)
 
   // Generate contact events.
   {
+
     const auto convert_box2d_coll_to_entt = [](entt::registry& r, const b2ShapeId a, const b2ShapeId b, auto callback) {
-      const auto fixture_eid_a = static_cast<entt::entity>((reinterpret_cast<uintptr_t>(b2Shape_GetUserData(a))));
-      const auto fixture_eid_b = static_cast<entt::entity>((reinterpret_cast<uintptr_t>(b2Shape_GetUserData(b))));
-      callback(fixture_eid_a, fixture_eid_b);
+      const auto shape_eid_a = (entt::entity)(reinterpret_cast<uintptr_t>(b2Shape_GetUserData(a)));
+      const auto shape_eid_b = (entt::entity)(reinterpret_cast<uintptr_t>(b2Shape_GetUserData(b)));
+
+      assert(shape_eid_a != entt::null);
+      assert(shape_eid_a != entt::null);
+      callback(shape_eid_a, shape_eid_b);
     };
+
     const b2ContactEvents c_events = b2World_GetContactEvents(data->world_id);
     const b2SensorEvents s_events = b2World_GetSensorEvents(data->world_id);
     auto& ui_data = data->ui_data;
@@ -206,34 +240,36 @@ game_fixed_update(GameData* data)
 
     for (int i = 0; i < c_events.beginCount; ++i) {
       b2ContactBeginTouchEvent* beginEvent = c_events.beginEvents + i;
-      convert_box2d_coll_to_entt(r, beginEvent->shapeIdA, beginEvent->shapeIdB, [&r](const auto e_a, const auto e_b) {
-        SINGLE_Events::get().dispatcher->trigger(OnCollisionEnter{ .a = e_a, .b = e_b });
-      });
+      convert_box2d_coll_to_entt(
+        r, beginEvent->shapeIdA, beginEvent->shapeIdB, [&r](const entt::entity e_a, const entt::entity e_b) {
+          SINGLE_Events::get().dispatcher.trigger(OnCollisionEnter{ .shape_a = e_a, .shape_b = e_b });
+        });
     }
     for (int i = 0; i < c_events.endCount; ++i) {
       b2ContactEndTouchEvent* endEvent = c_events.endEvents + i;
       if (b2Shape_IsValid(endEvent->shapeIdA) && b2Shape_IsValid(endEvent->shapeIdB)) {
-        convert_box2d_coll_to_entt(r, endEvent->shapeIdA, endEvent->shapeIdB, [](const auto e_a, const auto e_b) {
-          SINGLE_Events::get().dispatcher->trigger(OnCollisionExit{ .a = e_a, .b = e_b });
-        });
+        convert_box2d_coll_to_entt(
+          r, endEvent->shapeIdA, endEvent->shapeIdB, [](const entt::entity e_a, const entt::entity e_b) {
+            SINGLE_Events::get().dispatcher.trigger(OnCollisionExit{ .shape_a = e_a, .shape_b = e_b });
+          });
       }
     }
     for (int i = 0; i < s_events.beginCount; ++i) {
       b2SensorBeginTouchEvent* beginEvent = s_events.beginEvents + i;
       convert_box2d_coll_to_entt(
-        r, beginEvent->sensorShapeId, beginEvent->visitorShapeId, [&r](const auto e_a, const auto e_b) {
-          SINGLE_Events::get().dispatcher->trigger(OnCollisionEnter{ .a = e_a, .b = e_b });
+        r, beginEvent->sensorShapeId, beginEvent->visitorShapeId, [&r](const entt::entity e_a, const entt::entity e_b) {
+          SINGLE_Events::get().dispatcher.trigger(OnCollisionEnter{ .shape_a = e_a, .shape_b = e_b });
         });
     }
     for (int i = 0; i < s_events.endCount; ++i) {
       b2SensorEndTouchEvent* endEvent = s_events.endEvents + i;
       if (b2Shape_IsValid(endEvent->sensorShapeId) && b2Shape_IsValid(endEvent->visitorShapeId)) {
         convert_box2d_coll_to_entt(r, endEvent->sensorShapeId, endEvent->visitorShapeId, [](const auto e_a, const auto e_b) {
-          SINGLE_Events::get().dispatcher->trigger(OnCollisionExit{ .a = e_a, .b = e_b });
+          SINGLE_Events::get().dispatcher.trigger(OnCollisionExit{ .shape_a = e_a, .shape_b = e_b });
         });
       }
     }
-    SINGLE_Events::get().dispatcher->update();
+    SINGLE_Events::get().dispatcher.update();
   }
 };
 
@@ -260,6 +296,9 @@ game_update(GameData* data)
   // input events
   //
 
+  bool button_plus = false;
+  bool button_minus = false;
+
   for (const SDL_Event& evt : evts) {
     //
     // button events
@@ -279,10 +318,25 @@ game_update(GameData* data)
         keyboard_l.x = -1;
       if (scancode == SDL_SCANCODE_D)
         keyboard_l.x = 1;
-      if (scancode == SDL_SCANCODE_KP_0)
-        spawn(data, data->mouse_pos, { 50, 50 }, { 1.0, 1.0, 1.0 });
+
+      if (scancode == SDL_SCANCODE_UP)
+        keyboard_r.y = -1;
+      if (scancode == SDL_SCANCODE_DOWN)
+        keyboard_r.y = 1;
+      if (scancode == SDL_SCANCODE_LEFT)
+        keyboard_r.x = -1;
+      if (scancode == SDL_SCANCODE_RIGHT)
+        keyboard_r.x = 1;
+
       if (scancode == SDL_SCANCODE_SPACE)
         jump |= true;
+      if (scancode == SDL_SCANCODE_RETURN)
+        pickup |= true;
+
+      if (scancode == SDL_SCANCODE_EQUALS)
+        button_plus = true;
+      if (scancode == SDL_SCANCODE_MINUS)
+        button_minus = true;
     }
     if (evt.type == SDL_EVENT_KEY_UP) {
       const SDL_KeyboardEvent& k_evt = evt.key;
@@ -300,23 +354,43 @@ game_update(GameData* data)
         keyboard_l.x = 0;
       if (scancode == SDL_SCANCODE_D)
         keyboard_l.x = 0;
+
+      if (scancode == SDL_SCANCODE_UP)
+        keyboard_r.y = 0;
+      if (scancode == SDL_SCANCODE_DOWN)
+        keyboard_r.y = 0;
+      if (scancode == SDL_SCANCODE_LEFT)
+        keyboard_r.x = 0;
+      if (scancode == SDL_SCANCODE_RIGHT)
+        keyboard_r.x = 0;
     }
+
+    //
+    // mouse events
+    //
     if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
       SDL_MouseButtonEvent m_evt = evt.button;
 
-      // test if you click a shape
-      const auto mouse_pos = data->mouse_pos;
-      auto view = r.view<const PhysicsBodyComponent>();
-      for (const auto& [e, pb_c] : view.each()) {
-        auto shape_ids = get_shapes(pb_c.id);
-        if (b2Shape_TestPoint(shape_ids[0], pixels_to_meters(mouse_pos))) {
+      if (m_evt.button == SDL_BUTTON_LEFT) {
+        // test if you click a shape
+        const auto mouse_pos = data->mouse_pos;
+        auto view = r.view<const PhysicsBodyComponent>();
+        for (const auto& [e, pb_c] : view.each()) {
+          auto shape_ids = get_shapes(pb_c.id);
+          if (b2Shape_TestPoint(shape_ids[0], pixels_to_meters(mouse_pos))) {
 
-          // Destroy now!
-          b2DestroyBody(pb_c.id);
-          r.destroy(e);
+            // Destroy now!
+            b2DestroyBody(pb_c.id);
+            r.destroy(e);
+          }
         }
       }
+
+      if (m_evt.button == SDL_BUTTON_RIGHT) {
+        spawn(data, data->mouse_pos, { 50, 50 }, { 1.0, 1.0, 1.0 });
+      }
     }
+
     //
     // joysticks
     //
@@ -375,6 +449,16 @@ game_update(GameData* data)
     controller_l = inp_l;
     controller_r = inp_r;
 
+    const float epsilon = 0.01f;
+    if (abs(controller_l.x) < epsilon)
+      controller_l.x = 0.0f;
+    if (abs(controller_l.y) < epsilon)
+      controller_l.y = 0.0f;
+    if (abs(controller_r.x) < epsilon)
+      controller_r.x = 0.0f;
+    if (abs(controller_r.y) < epsilon)
+      controller_r.y = 0.0f;
+
     // generate inputs for one button.
     static bool s_press = false;
     static bool s_held_last_frame = false;
@@ -388,10 +472,10 @@ game_update(GameData* data)
     if (!s_held_last_frame && s_held)
       s_press = true;
     s_held_last_frame = s_held;
-
     if (s_press)
       SDL_Log("south button pressed");
-    jump |= s_press;
+    // jump |= s_press;
+    pickup |= s_press;
 
     ui_data.controller_l.x = lx_nrm;
     ui_data.controller_l.y = ly_nrm;
@@ -409,12 +493,54 @@ game_update(GameData* data)
   r_input.x = std::clamp(r_input.x, -1.0f, 1.0f);
   r_input.y = std::clamp(r_input.y, -1.0f, 1.0f);
 
+  // set camera to position of transform
+  // auto view = r.view<const PhysicsBodyComponent, const TransformComponent>();
+  // for (const auto& [e, pb_c, t_c] : view.each()) {
+  //   const b2BodyType type = b2Body_GetType(pb_c.id);
+  //   if (type == b2_staticBody)
+  //     continue;
+  //   camera_pos = meters_to_pixels(b2Body_GetPosition(pb_c.id)) - 0.5 * screen_size;
+  //   break;
+  // }
+
+  // update camera with right analogue
+  camera_pos = camera_pos + data->dt * 1000 * r_input;
+  data->camera_pos = camera_pos;
+
   // Update transforms via physics body.
   update_transforms_from_physics(r);
 
   // update_events_system()
-  auto& events_c = SINGLE_Events::get();
-  events_c.dispatcher->update();
+  SINGLE_Events::get().dispatcher.update();
+
+  // update item amounts with keyboard
+  {
+    const auto view = r.view<InventoryComponent>();
+    for (const auto& [e, inv_c] : view.each()) {
+      if (button_plus)
+        inv_c.items++;
+      if (button_minus)
+        inv_c.items--;
+    }
+  }
+
+  // check what you're colliding with.
+  // if it's a producer: you gain 1 item.
+  // if it's a consumer, you lose 1 item.
+  if (jump) {
+    // TODO
+    // b2Shape_TestPoint(b2ShapeId shapeId, b2Vec2 point)
+  }
+
+  // populate ui data from the gamethread????
+  {
+    auto& hmm = ui_data.hmm;
+    hmm.clear(); // .clear() is bad
+    const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
+    for (const auto& [e, t_c, col_c, inv_c] : view.each()) {
+      hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c });
+    }
+  }
 };
 
 void
@@ -426,12 +552,19 @@ game_update_ui(GameUIData* ui_data)
   auto flags = 0;
   flags |= ImGuiWindowFlags_NoDecoration;
   flags |= ImGuiWindowFlags_AlwaysAutoResize;
-
   ImGui::Begin("SomeOtherCrazyWindow", nullptr, flags);
-  ImGui::Text("(GameThread) FPS: %0.2f", 1.0f / data.game_dt);
+
+  if (data.game_dt != 0.0f)
+    ImGui::Text("(GameThread) FPS: %f", 1.0f / data.game_dt);
+  else
+    ImGui::Text("(GameThread) FPS: dt not set?");
+
   ImGui::Text("(RenderThread) FPS: %0.2f", ImGui::GetIO().Framerate);
   ImGui::Text("contact events: %i", data.n_contact_events);
   ImGui::Text("sensor events: %i", data.n_sensor_events);
+  ImGui::Text("renderables: %i", (int)ui_data->renderable.size());
+  ImGui::Text("ui data hmm: %i", (int)ui_data->ui_data.hmm.size());
+  ImGui::Text("camera_pos: %0.2f, %0.2f", ui_data->camera_pos.x, ui_data->camera_pos.y);
   ImGui::End();
 
   // int controllers = 0;
@@ -444,7 +577,6 @@ game_update_ui(GameUIData* ui_data)
   ImGui::Text("%f %f %f %f", data.keyboard_l.x, data.keyboard_l.y, data.keyboard_r.x, data.keyboard_r.y);
 
   ImGui::Text("Controllers");
-
   ImGui::Text("%i %f %f %f %f",
               data.n_controllers,
               data.controller_l.x,
@@ -456,8 +588,42 @@ game_update_ui(GameUIData* ui_data)
   ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
 
   ImGui::End();
+
+  const auto camera_p = ui_data->camera_pos;
+
+  // Worldspace overlay.
+  {
+    ImGuiWindowFlags flags = 0;
+    flags |= ImGuiWindowFlags_NoDecoration;
+    flags |= ImGuiWindowFlags_NoMove;
+    flags |= ImGuiWindowFlags_NoBackground;
+    flags |= ImGuiWindowFlags_NoFocusOnAppearing;
+    flags |= ImGuiWindowFlags_NoDocking;
+    flags |= ImGuiWindowFlags_NoInputs;
+    flags |= ImGuiWindowFlags_NoSavedSettings;
+    ImGui::SetNextWindowPos({ 0, 0 }, ImGuiCond_Always, { 0.0f, 0.0f });
+    ImGui::SetNextWindowSize({ screen_size.x, screen_size.y }, ImGuiCond_Always);
+    ImGui::Begin("overlay", 0, flags);
+
+    for (const auto& ui : ui_data->ui_data.hmm) {
+      // ImGui::PushID(eid);
+
+      const auto pos = ui.renderable.transform.pos;
+      const auto ss_pos = worldspace_to_screenspace(camera_p, pos, screen_size);
+      ImGui::SetCursorScreenPos({ ss_pos.x, ss_pos.y });
+
+      // const auto txt = std::format("items: {}", ui.inventory.items.size());
+      const auto txt = std::format("eid: {} \n items: {}", (uint32_t)ui.entity, ui.inventory.items);
+      ImGui::Text("%s", txt.c_str());
+
+      // ImGui::PopID();
+    }
+
+    ImGui::End();
+  }
 };
 
+// note: game_init() is called after game_refresh();
 void
 game_refresh(GameData* data)
 {

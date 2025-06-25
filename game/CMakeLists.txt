@@ -25,10 +25,11 @@ find_packages()
 include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
 
 # Add source files.
-file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS "*.cpp"
+file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS "common/src/*.cpp" "common/src/**/*.cpp" "game/src/*.cpp" "game/src/**/*.cpp"
   ${IMGUI_SOURCE}
-  ${CMAKE_SOURCE_DIR}/game/src/common/common.cpp
-  ${CMAKE_SOURCE_DIR}/game/src/dll_boundary/*.cpp
+  ${CMAKE_SOURCE_DIR}/thirdparty/enkits/TaskScheduler.cpp
+  ${CMAKE_SOURCE_DIR}/common/src/*.cpp
+  ${CMAKE_SOURCE_DIR}/game/src/*.cpp
 )
 
 # Instead of add_executable().
@@ -36,23 +37,37 @@ add_library(GameDLL SHARED
   ${SRC_FILES}
 )
 
+# Precompile headers
+set(PCH_FILE ${CMAKE_SOURCE_DIR}/common/src/core/pch.hpp)
+target_precompile_headers(game PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${PCH_FILE}>")
+set(PCH_INSTANTIATE_TEMPLATES ON)
+
 # Link Libraries
 link_libs(GameDLL)
-set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
+
+if(${CMAKE_BUILD_TYPE} MATCHES Debug)
+  set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2dd.lib)
+  set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2dd.dll)
+else()
+  set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
+  set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2d.dll)
+endif()
+
 target_link_libraries(GameDLL PRIVATE ${BOX2D_LIB})
 
 # Define the export macro for the .dll
-target_compile_definitions(GameDLL PRIVATE
-  DLL_EXPORTS
-)
+target_compile_definitions(GameDLL PRIVATE DLL_EXPORTS)
 
 target_include_directories(GameDLL PUBLIC
   ${IMGUI_INCLUDES}
+  ${Stb_INCLUDE_DIR}
   ${VCPKG_INCLUDES}
   ${CMAKE_SOURCE_DIR}/thirdparty/box2d/include
+  ${CMAKE_SOURCE_DIR}/thirdparty/enkits/src
   ${CMAKE_SOURCE_DIR}/thirdparty/entt/src
-  ${CMAKE_SOURCE_DIR}/game/src/common
-  ${CMAKE_SOURCE_DIR}/game/src/dll_boundary
+  ${CMAKE_SOURCE_DIR}/thirdparty/sdk/public
+  ${CMAKE_SOURCE_DIR}/common/src
+  ${CMAKE_SOURCE_DIR}/game/src
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")

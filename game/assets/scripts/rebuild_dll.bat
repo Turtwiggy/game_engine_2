@@ -11,15 +11,15 @@
 set CONFIG_COMMAND=cmake --no-warn-unused-cli -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE -DCMAKE_BUILD_TYPE:STRING=Release -S . -B build -G Ninja
 set BUILD_COMMAND=cmake --build build --config Release --target GameDLL
 set PROJECT=C:\Programming\c++_game_engine_2
-set DLL_SRC=%PROJECT%\build\game\src\dll_boundary\GameDLL.dll
-set DLL_DST=%PROJECT%\build\game\src\engine\GameDLL-hot-unlocked.dll
+set DLL_SRC=%PROJECT%\build\game\GameDLL.dll
+set DLL_DST=%PROJECT%\build\engine\GameDLL-hot-unlocked.dll
 set MSYS2_PATH=C:\Software\msys64
 
 :: Run configuration and build in single shell session
 echo Running build command...
 :: call "%MSYS2_PATH%\msys2_shell.cmd" -defterm -where %PROJECT% -no-start -ucrt64 -shell bash -c '%BUILD_COMMAND% || exit 1' > nul
 pushd %PROJECT%
-del .\build\game\src\dll_boundary\GameDLL.pdb
+del .\build\game\GameDLL.pdb
 call "C:/Program Files/CMake/bin/cmake.exe" --build build --config Debug --target GameDLL
 popd
 

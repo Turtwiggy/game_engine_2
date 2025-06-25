@@ -1,20 +1,12 @@
-#include "sdl_surface.hpp"
+#include "core/pch.hpp"
 
 #include "sdl_exception.hpp"
-
-#include <SDL3/SDL_assert.h>
-#include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_log.h>
-#include <SDL3/SDL_pixels.h>
-#include <SDL3/SDL_surface.h>
+#include "sdl_surface.hpp"
 
 #if !defined(STB_IMAGE_IMPLEMENTATION)
 #define STB_IMAGE_IMPLEMENTATION
 #endif
 #include <stb_image.h>
-
-#include <format>
-#include <stdexcept>
 
 namespace game2d {
 

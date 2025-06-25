@@ -1,11 +1,6 @@
+#include "core/pch.hpp"
+
 #include "sdl_shader.hpp"
-
-#include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_init.h>
-#include <SDL3/SDL_log.h>
-
-#include <format>
-#include <stdexcept>
 
 namespace game2d {
 

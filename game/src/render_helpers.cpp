@@ -1,19 +1,12 @@
+#include "core/pch.hpp"
+
 #include "render_helpers.hpp"
 
-#include "box2d/box2d.h"
-#include "common.hpp"
-#include <entt/entt.hpp>
+#include "core/box2d/box2d_components.hpp"
+#include "core/box2d/box2d_helpers.hpp"
+#include "core/common.hpp"
 
 namespace game2d {
-
-std::vector<b2ShapeId>
-get_shapes(b2BodyId id)
-{
-  const int n_shapes = b2Body_GetShapeCount(id);
-  std::vector<b2ShapeId> ids(n_shapes);
-  b2Body_GetShapes(id, ids.data(), (int)ids.size());
-  return ids;
-};
 
 void
 update_transforms_from_physics(entt::registry& r)

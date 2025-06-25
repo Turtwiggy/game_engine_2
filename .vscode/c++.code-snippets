@@ -20,28 +20,30 @@
 		"body": [
 			"#pragma once",
 			"",
-			"#include <entt/entt.hpp>",
+			"#include <entt/fwd.hpp>",
 			"",
 			"namespace game2d {",
 			"",
 			"void",
-			"update_X_system(entt::registry& r);",
+			"update_${1:X}_system(entt::registry& r);",
 			"",
 			"} // namespace game2d"
 		]
 	},
 	"c++ new body file": {
 		"body": [
-			"#include \"system.hpp\"",
+			"#include \"pch.hpp\"",
 			"",
-			"#include \"components.hpp\"",
+			"#include \"${1:system}.hpp\"",
 			"",
 			"namespace game2d {",
 			"",
 			"void",
-			"update_X_system(entt::registry& r)",
+			"update_${1:system}(entt::registry& r)",
 			"{",
-			"  //",
+			"#if defined(_DEBUG)",
+			"  ZoneScoped;",
+			"#endif",
 			"}",
 			"",
 			"} // namespace game2d"

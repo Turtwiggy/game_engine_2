@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common.hpp"
+#include "core/common.hpp"
 
 #include <SDL3/SDL.h>
 #include <entt/entt.hpp>
@@ -32,6 +32,7 @@ struct sdl_game_code
   game_refresh_func_t game_refresh;
 
   bool valid = false;
+  bool rebuilt = false;
 };
 
 sdl_game_code

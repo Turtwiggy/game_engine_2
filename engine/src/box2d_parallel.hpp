@@ -1,11 +1,6 @@
 #pragma once
 
-#include "common.hpp"
-
 #include "TaskScheduler.h"
-#include "box2d/box2d.h"
-
-#include <cstdint>
 
 namespace game2d {
 

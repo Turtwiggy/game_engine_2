@@ -17,8 +17,8 @@ project(subprojects VERSION 0.1.0)
 
 # projects
 # add_subdirectory(thirdparty/box2d ${CMAKE_SOURCE_DIR}/build/box2d)
-add_subdirectory(game/src/dll_boundary)
-add_subdirectory(game/src/engine)
+add_subdirectory(engine)
+add_subdirectory(game)
 
 if(EMSCRIPTEN)
 else()

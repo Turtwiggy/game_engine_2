@@ -41,11 +41,11 @@ FetchContent_MakeAvailable(tracy)
 # Add source files
 include(${CMAKE_SOURCE_DIR}/cmake/imgui.cmake)
 
-file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS "*.cpp"
+file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS "common/src/*.cpp" "common/src/**/*.cpp" "engine/src/*.cpp" "engine/src/**/*.cpp"
   ${IMGUI_SOURCE}
   ${CMAKE_SOURCE_DIR}/thirdparty/enkits/TaskScheduler.cpp
-  ${CMAKE_SOURCE_DIR}/game/src/common/common.cpp
-  ${CMAKE_SOURCE_DIR}/game/src/engine/*.cpp
+  ${CMAKE_SOURCE_DIR}/common/src/*.cpp
+  ${CMAKE_SOURCE_DIR}/engine/src/*.cpp
 )
 
 # Main executable
@@ -59,11 +59,22 @@ else()
   add_executable(game ${SRC_FILES})
 endif()
 
+# Precompile headers
+set(PCH_FILE ${CMAKE_SOURCE_DIR}/common/src/core/pch.hpp)
+target_precompile_headers(game PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${PCH_FILE}>")
+set(PCH_INSTANTIATE_TEMPLATES ON)
+
 link_libs(game)
 target_link_libraries(game PUBLIC TracyClient)
 
-set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
-set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2d.dll)
+if(${CMAKE_BUILD_TYPE} MATCHES Debug)
+  set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2dd.lib)
+  set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2dd.dll)
+else()
+  set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
+  set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2d.dll)
+endif()
+
 message("searching for box2d at... ${BOX2D_LIB}")
 target_link_libraries(game PRIVATE ${BOX2D_LIB})
 
@@ -75,7 +86,7 @@ target_link_libraries(game PRIVATE ${BOX2D_LIB})
 # I currently hot-reload the dll via GameDLL-hot-unlocked.DLL and GameDLL-hot-locked.DLL#
 # However, I cannot unload GameDLL.dll because I link to the lib????
 add_dependencies(game GameDLL)
-set(LIB_SRC ${CMAKE_SOURCE_DIR}/build/game/src/dll_boundary/GameDLL.lib)
+set(LIB_SRC ${CMAKE_SOURCE_DIR}/build/game/GameDLL.lib)
 message("searching for .dll at... ${LIB_SRC}")
 target_link_libraries(game PRIVATE ${LIB_SRC})
 
@@ -87,8 +98,8 @@ target_include_directories(game PRIVATE
   ${CMAKE_SOURCE_DIR}/thirdparty/enkits/src
   ${CMAKE_SOURCE_DIR}/thirdparty/entt/src
   ${CMAKE_SOURCE_DIR}/thirdparty/sdk/public
-  ${CMAKE_SOURCE_DIR}/game/src/common
-  ${CMAKE_SOURCE_DIR}/game/src/engine
+  ${CMAKE_SOURCE_DIR}/common/src
+  ${CMAKE_SOURCE_DIR}/engine/src
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")
@@ -113,20 +124,6 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES Linux)
   set(VCPKG_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/thirdparty/vcpkg/installed/x64-linux/include)
 endif()
 
-# Create symlink for assets for emscripten
-IF(EMSCRIPTEN)
-  set(src ${CMAKE_SOURCE_DIR}/game/assets)
-  set(dst ${CMAKE_CURRENT_BINARY_DIR}/../assets)
-  message("creating symlink src... ${src}")
-  message("creating symlink dst... ${dst}")
-  add_custom_command(
-    TARGET ${PROJECT_NAME} PRE_BUILD
-    COMMAND ${CMAKE_COMMAND} -E create_symlink ${src} ${dst}
-    DEPENDS ${dst}
-    COMMENT "symbolic link resources folder from ${src} => ${dst}"
-  )
-ENDIF()
-
 # Create symlink for assets only in debug mode.
 # This is due to the way I've implemented github
 # actions for building release. Github actins will
@@ -140,10 +137,17 @@ ENDIF()
 # Copy dll to GameDLL.dll
 if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
   message("copying game.dll...")
-  set(BUILT_DLL "${CMAKE_SOURCE_DIR}/build/game/src/dll_boundary/GameDLL.dll")
+  set(BUILT_DLL "${CMAKE_SOURCE_DIR}/build/game/GameDLL.dll")
+
   copy_file_next_to_exe(game "${BUILT_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/GameDLL.dll")
   copy_file_next_to_exe(game "${BUILT_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/GameDLL-hot-unlocked.dll")
-  copy_file_next_to_exe(game "${BOX2D_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/box2d.dll")
+
+  # box2d.dll => next to .exe
+  if(${CMAKE_BUILD_TYPE} MATCHES Debug)
+    copy_file_next_to_exe(game "${BOX2D_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/box2dd.dll")
+  else()
+    copy_file_next_to_exe(game "${BOX2D_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/box2d.dll")
+  endif()
 endif()
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})

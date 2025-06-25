@@ -1,7 +1,7 @@
 function(create_symlinks project)
   #
   message("creating symlink...")
-  set(src ${CMAKE_SOURCE_DIR}/game_survivors/assets)
+  set(src ${CMAKE_SOURCE_DIR}/game/assets)
   set(dst ${CMAKE_CURRENT_BINARY_DIR}/assets)
   message("creating symlink src... ${src}")
   message("creating symlink dst... ${dst}")
@@ -51,24 +51,26 @@ function(copy_file_next_to_exe project file_src file_dst)
     message("File exists at dst: ${file_dst}")
   endif()
 
-  message("copying... ${file_src} => ${file_dst}")
+  # message("copying... ${file_src} => ${file_dst}")
 
-  execute_process(
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${file_src} ${file_dst}
-    RESULT_VARIABLE result
-    ERROR_VARIABLE error
-  )
-
-  if(NOT result EQUAL 0)
-    message(WARNING "Failed to copy file: ${error}")
-  else()
-    message("File copied.")
-  endif()
-
-  get_filename_component(file_name "${file_dst}" NAME)
-  message("File name: ${file_name}")
-  add_custom_target("copy_to_${file_name}" ALL
+  # execute_process(
+  # COMMAND ${CMAKE_COMMAND} -E copy_if_different ${file_src} ${file_dst}
+  # RESULT_VARIABLE result
+  # ERROR_VARIABLE error
+  # )
+  # if(NOT result EQUAL 0)
+  # message(WARNING "Failed to copy file: ${error}")
+  # else()
+  # message("File copied.")
+  # endif()
+  # get_filename_component(file_name "${file_dst}" NAME)
+  # message("File name: ${file_name}")
+  add_custom_command(
+    TARGET ${project} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E remove ${file_dst}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${file_src} ${file_dst}
+    COMMAND ${CMAKE_COMMAND} -E echo "Copied ${file_src} to ${file_dst}"
   )
+
+  # configure_file(${file_src} ${file_dst} COPYONLY)
 endfunction()
