@@ -1,7 +1,6 @@
 #pragma once
 
 #include <entt/fwd.hpp>
-#include <entt/signal/dispatcher.hpp>
 
 namespace game2d {
 
@@ -23,13 +22,6 @@ protected:
 public:
   Singleton(Singleton const&) = delete;
   void operator=(Singleton const&) = delete;
-};
-
-struct SINGLE_Events : public Singleton<SINGLE_Events>
-{
-  entt::dispatcher dispatcher;
-
-  SINGLE_Events() = default;
 };
 
 } // namespace game2d

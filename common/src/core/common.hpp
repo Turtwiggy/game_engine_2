@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/vec.hpp"
+#include "core/maths/vec.hpp"
 
 #include <SDL3/SDL.h>
 #include <box2d/box2d.h>
@@ -83,6 +83,13 @@ struct CommonUiData
   int n_sensor_events = 0;
 
   std::vector<UIEntity> hmm;
+
+  // set to true/false by game thread
+  bool game_over = false;
+
+  // set to true by ui thread, set to false by game thread.
+  bool play_again = false;
+
   // std::vector<std::pair<std::string, std::string>> something;
 };
 
@@ -111,21 +118,17 @@ struct RenderData
   // data
   std::vector<Renderable> renderable;
   vec2 camera_pos{ 0, 0 };
-
   CommonUiData ui_data;
 };
 
 // data owned by the RenderThread
 struct GameUIData
 {
-  // data
   ImGuiContext* ctx;
 
-  vec2 camera_pos{ 0, 0 };
-
-  CommonUiData ui_data;
-
   std::vector<Renderable> renderable;
+  vec2 camera_pos{ 0, 0 };
+  CommonUiData ui_data;
 };
 
 } // namespace game2d

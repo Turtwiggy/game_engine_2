@@ -7,9 +7,13 @@
 #include "core/box2d/box2d_helpers.hpp"
 #include "core/camera/camera_helpers.hpp"
 #include "core/common.hpp"
-#include "core/singleton.hpp"
+#include "core/entt/entt_helpers.hpp"
+#include "core/maths/helpers.hpp"
 #include "render_helpers.hpp"
+#include "systems/system_events/events_components.hpp"
 #include "systems/system_items/items_components.hpp"
+#include "systems/ui_system_gameover/ui_gameover_components.hpp"
+#include "systems/ui_system_gameover/ui_gameover_system.hpp"
 
 namespace game2d {
 
@@ -17,6 +21,7 @@ static entt::registry internal_r;
 static bool refreshed = false;
 const auto screen_size = vec2(1280, 720); // todo: fix this
 
+static float camera_speed = 100;
 static vec2 camera_pos{ 0, 0 };
 static vec2 keyboard_l{ 0, 0 };
 static vec2 keyboard_r{ 0, 0 };
@@ -67,12 +72,6 @@ spawn(GameData* data,
   t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
   t_c.size = meters_to_pixels(size_meters);
 
-  int seed = 0;
-#if defined(_DEBUG)
-  seed = get_system_time_for_seed();
-#endif
-  static RandomState rnd(seed);
-
   // float rnd_r = random(rnd, 0.0f, 1.0f);
   // float rnd_g = random(rnd, 0.0f, 1.0f);
   // float rnd_b = random(rnd, 0.0f, 1.0f);
@@ -82,7 +81,6 @@ spawn(GameData* data,
   r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
   r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ .id = body_id, .shape_ids = { shape_id } });
   set_entity_from_body_id(body_id, e);
-  r.emplace<InventoryComponent>(e, InventoryComponent{ .items = (int)random(rnd, 0.0f, 100.0f) });
 
   entt::entity shape_e = r.create();
   r.emplace<PhysicsShapeComponent>(shape_e, PhysicsShapeComponent{ .body_id = body_id, .shape_id = shape_id });
@@ -90,6 +88,26 @@ spawn(GameData* data,
 
   return e;
 };
+
+void
+handle_on_coll_enter__check_for_gameover(entt::registry& r, const OnCollisionEnter& evt)
+{
+  const auto parent_a_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_a).body_id);
+  const auto parent_b_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_b).body_id);
+  const auto [shape_a, shape_b] = coll<const PlayerComponent, const ContainerReceiverComponent>(r, parent_a_e, parent_b_e);
+
+  if (shape_a == entt::null || shape_b == entt::null)
+    return; // not a coll of interest
+
+  const auto& consumer_inv = r.get<const InventoryComponent>(parent_b_e);
+  SDL_Log("consumer has: %i items", consumer_inv.items);
+
+  const bool gameover = consumer_inv.items >= 5;
+  if (gameover) {
+    SDL_Log("dingding! gameover");
+    create_empty<Request_GameOver>(r);
+  }
+}
 
 void
 handle_on_coll_enter__log(entt::registry& r, const OnCollisionEnter& evt)
@@ -108,8 +126,10 @@ handle_on_coll_enter__log(entt::registry& r, const OnCollisionEnter& evt)
     if (shape_a != entt::null && shape_b != entt::null) {
       SDL_Log("collision enter with provider.");
 
-      // auto player_body_c = r.get<PhysicsBodyComponent>(shape_a);
-      // auto* body_data = b2Body_GetUserData(player_body_c.id);
+      auto& provider_inv = r.get<InventoryComponent>(parent_b_e);
+      if (provider_inv.items <= 0)
+        return; // no more items to give
+      provider_inv.items--;
 
       auto& player_inv = r.get<InventoryComponent>(parent_a_e);
       player_inv.items++;
@@ -122,7 +142,15 @@ handle_on_coll_enter__log(entt::registry& r, const OnCollisionEnter& evt)
       SDL_Log("collision enter with reciever.");
 
       auto& player_inv = r.get<InventoryComponent>(parent_a_e);
+      if (player_inv.items <= 0)
+        return; // no item on player
       player_inv.items--;
+
+      auto& consumer_inv = r.get<InventoryComponent>(parent_b_e);
+      consumer_inv.items++;
+
+      // check for gameover
+      handle_on_coll_enter__check_for_gameover(r, evt);
     }
   }
 }
@@ -157,19 +185,33 @@ game_init(GameData* data)
   data->world_id = b2CreateWorld(&world_def);
 
   // spawn(data, { 1280 * 0.5f, 720 * 0.75f }, { 1000, 50 }, true); // static
-  const auto provider_e = spawn(data, { 300, 300 }, { 50, 50 }, { 1.0f, 0.0f, 0.0f });
+
+  // rnd_x on left side of screen.
+  int seed = 0;
+#if defined(_DEBUG)
+  seed = get_system_time_for_seed();
+#endif
+  static RandomState rnd(seed);
+  const auto rnd_0_x = random(rnd, 100.0f, 450.0f);
+  const auto rnd_1_x = random(rnd, 550.0f, 900.0f);
+
+  const auto provider_e = spawn(data, { rnd_0_x, 300 }, { 50, 50 }, { 1.0f, 0.0f, 0.0f });
   r.emplace<ContainerProviderComponent>(provider_e);
+  r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto consumer_e = spawn(data, { 900, 450 }, { 50, 50 }, { 0.0f, 1.0f, 0.0f });
+  const auto consumer_e = spawn(data, { rnd_1_x, 450 }, { 50, 50 }, { 0.0f, 1.0f, 0.0f });
   r.emplace<ContainerReceiverComponent>(consumer_e);
+  r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
 
-  const auto player_e = spawn(data, { 450, 450 }, { 50, 50 }, { 0.0f, 0.0f, 1.0f }, false, true);
+  const auto player_e = spawn(data, { 500, 450 }, { 50, 50 }, { 0.0f, 0.0f, 1.0f }, false, true);
   r.emplace<PlayerComponent>(player_e);
+  r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
 
   // setup events
   auto& evts_c = SINGLE_Events::get();
   evts_c.dispatcher.sink<OnCollisionEnter>().connect<&handle_on_coll_enter__log>(r);
   evts_c.dispatcher.sink<OnCollisionExit>().connect<&handle_on_coll_exit__log>(r);
+  evts_c.dispatcher.sink<OnCollisionEnter>().connect<&handle_on_coll_enter__check_for_gameover>(r);
 };
 
 void
@@ -279,19 +321,6 @@ game_update(GameData* data)
   const auto evts = data->events;
   auto& r = internal_r;
 
-  // note: remove static at some point
-  // static float timer_cur = 0.0f;
-  // static float timer_max = 0.1f;
-  // timer_cur += data->dt;
-  // if (timer_cur >= timer_max) {
-  //   SDL_Log("X seconds elapsed...");
-  //   timer_cur -= timer_max;
-  // }
-
-  const auto scale = [](const float x, const float min, const float max, const float a, const float b) -> float {
-    return ((b - a) * (x - min)) / (max - min) + a;
-  };
-
   //
   // input events
   //
@@ -337,6 +366,9 @@ game_update(GameData* data)
         button_plus = true;
       if (scancode == SDL_SCANCODE_MINUS)
         button_minus = true;
+
+      if (scancode == SDL_SCANCODE_KP_9)
+        create_empty<Request_GameOver>(r);
     }
     if (evt.type == SDL_EVENT_KEY_UP) {
       const SDL_KeyboardEvent& k_evt = evt.key;
@@ -504,7 +536,7 @@ game_update(GameData* data)
   // }
 
   // update camera with right analogue
-  camera_pos = camera_pos + data->dt * 1000 * r_input;
+  camera_pos = camera_pos + data->dt * camera_speed * r_input;
   data->camera_pos = camera_pos;
 
   // Update transforms via physics body.
@@ -512,17 +544,6 @@ game_update(GameData* data)
 
   // update_events_system()
   SINGLE_Events::get().dispatcher.update();
-
-  // update item amounts with keyboard
-  {
-    const auto view = r.view<InventoryComponent>();
-    for (const auto& [e, inv_c] : view.each()) {
-      if (button_plus)
-        inv_c.items++;
-      if (button_minus)
-        inv_c.items--;
-    }
-  }
 
   // check what you're colliding with.
   // if it's a producer: you gain 1 item.
@@ -532,14 +553,30 @@ game_update(GameData* data)
     // b2Shape_TestPoint(b2ShapeId shapeId, b2Vec2 point)
   }
 
+  //
+  // systems
+  //
+
+  // process ui data.
+  const auto view = r.view<const Request_GameOver>();
+  const bool gameover = view.size() > 0;
+  if (data->ui_data.play_again && gameover) {
+    SDL_Log("(gamethread) ui clicked to play again");
+    r.destroy(view.begin(), view.end());
+    game_refresh(data);
+    game_init(data);
+  }
+
   // populate ui data from the gamethread????
   {
     auto& hmm = ui_data.hmm;
     hmm.clear(); // .clear() is bad
     const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
-    for (const auto& [e, t_c, col_c, inv_c] : view.each()) {
+    for (const auto& [e, t_c, col_c, inv_c] : view.each())
       hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c });
-    }
+
+    ui_data.play_again = false;
+    ui_data.game_over = gameover;
   }
 };
 
@@ -549,47 +586,55 @@ game_update_ui(GameUIData* ui_data)
   ImGui::SetCurrentContext(ui_data->ctx);
   const auto& data = ui_data->ui_data;
 
-  auto flags = 0;
-  flags |= ImGuiWindowFlags_NoDecoration;
-  flags |= ImGuiWindowFlags_AlwaysAutoResize;
-  ImGui::Begin("SomeOtherCrazyWindow", nullptr, flags);
-
-  if (data.game_dt != 0.0f)
-    ImGui::Text("(GameThread) FPS: %f", 1.0f / data.game_dt);
-  else
-    ImGui::Text("(GameThread) FPS: dt not set?");
-
-  ImGui::Text("(RenderThread) FPS: %0.2f", ImGui::GetIO().Framerate);
-  ImGui::Text("contact events: %i", data.n_contact_events);
-  ImGui::Text("sensor events: %i", data.n_sensor_events);
-  ImGui::Text("renderables: %i", (int)ui_data->renderable.size());
-  ImGui::Text("ui data hmm: %i", (int)ui_data->ui_data.hmm.size());
-  ImGui::Text("camera_pos: %0.2f, %0.2f", ui_data->camera_pos.x, ui_data->camera_pos.y);
-  ImGui::End();
-
   // int controllers = 0;
   // SDL_GetJoysticks(&controllers);
   // ImGui::Text("n_controllers: %i", controllers);
 
-  ImGui::Begin("SomeOtherWindow", nullptr, flags);
+  {
+    auto flags = 0;
+    flags |= ImGuiWindowFlags_NoDecoration;
+    flags |= ImGuiWindowFlags_AlwaysAutoResize;
+    ImGui::Begin("SomeOtherCrazyWindow", nullptr, flags);
 
-  ImGui::Text("Keyboard");
-  ImGui::Text("%f %f %f %f", data.keyboard_l.x, data.keyboard_l.y, data.keyboard_r.x, data.keyboard_r.y);
+    if (data.game_dt != 0.0f)
+      ImGui::Text("(GameThread) FPS: %f", 1.0f / data.game_dt);
+    else
+      ImGui::Text("(GameThread) FPS: dt not set?");
 
-  ImGui::Text("Controllers");
-  ImGui::Text("%i %f %f %f %f",
-              data.n_controllers,
-              data.controller_l.x,
-              data.controller_l.y,
-              data.controller_r.x,
-              data.controller_r.y);
+    ImGui::Text("(RenderThread) FPS: %0.2f", ImGui::GetIO().Framerate);
+    ImGui::Text("contact events: %i", data.n_contact_events);
+    ImGui::Text("sensor events: %i", data.n_sensor_events);
+    ImGui::Text("renderables: %i", (int)ui_data->renderable.size());
+    ImGui::Text("ui data hmm: %i", (int)ui_data->ui_data.hmm.size());
+    ImGui::Text("camera_pos: %0.2f, %0.2f", ui_data->camera_pos.x, ui_data->camera_pos.y);
+    ImGui::End();
+  }
 
-  ImGui::Text("Input");
-  ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
+  {
+    auto flags = 0;
+    flags |= ImGuiWindowFlags_NoDecoration;
+    flags |= ImGuiWindowFlags_AlwaysAutoResize;
+    ImGui::Begin("SomeOtherWindow", nullptr, flags);
 
-  ImGui::End();
+    ImGui::Text("Keyboard");
+    ImGui::Text("%f %f %f %f", data.keyboard_l.x, data.keyboard_l.y, data.keyboard_r.x, data.keyboard_r.y);
 
-  const auto camera_p = ui_data->camera_pos;
+    ImGui::Text("Controllers");
+    ImGui::Text("%i %f %f %f %f",
+                data.n_controllers,
+                data.controller_l.x,
+                data.controller_l.y,
+                data.controller_r.x,
+                data.controller_r.y);
+
+    ImGui::Text("Input");
+    ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
+
+    ImGui::End();
+  }
+
+  // systems
+  update_ui_gameover_system(ui_data->ui_data);
 
   // Worldspace overlay.
   {
@@ -605,6 +650,7 @@ game_update_ui(GameUIData* ui_data)
     ImGui::SetNextWindowSize({ screen_size.x, screen_size.y }, ImGuiCond_Always);
     ImGui::Begin("overlay", 0, flags);
 
+    const auto camera_p = ui_data->camera_pos;
     for (const auto& ui : ui_data->ui_data.hmm) {
       // ImGui::PushID(eid);
 
@@ -612,8 +658,8 @@ game_update_ui(GameUIData* ui_data)
       const auto ss_pos = worldspace_to_screenspace(camera_p, pos, screen_size);
       ImGui::SetCursorScreenPos({ ss_pos.x, ss_pos.y });
 
-      // const auto txt = std::format("items: {}", ui.inventory.items.size());
-      const auto txt = std::format("eid: {} \n items: {}", (uint32_t)ui.entity, ui.inventory.items);
+      // const auto txt = std::format("eid: {} \n items: {}", (uint32_t)ui.entity, ui.inventory.items);
+      const auto txt = std::format("items: {}", ui.inventory.items);
       ImGui::Text("%s", txt.c_str());
 
       // ImGui::PopID();
@@ -629,6 +675,9 @@ game_refresh(GameData* data)
 {
   SDL_Log("(GameEngine) game_refresh()");
   refreshed = true;
+
+  // clear the registry
+  internal_r.clear();
 
   // Delete the physics world. Create another one.
   b2DestroyWorld(data->world_id);
