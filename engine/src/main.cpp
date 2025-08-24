@@ -470,22 +470,19 @@ RenderThread()
 
           if (scancode == SDL_SCANCODE_8) {
             SDL_Log("(RenderThread) wants to rebuild shaders...");
+            std::unique_lock lock(rebuild_dll_mtx);
 
+            // releasing and recreate the fill pipeline (which uses the updated shaders)
             SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
 
-            // for the moemnt, just just releasing and recreating the fill pipeline
-            // this is where the shader-hotreloading code will go
-
-            //   std::unique_lock lock(rebuild_dll_mtx);
-            //   SDL_Log("Rebuild shaders...");
-            //   const auto build_script = "compile.bat";
-            //   const auto full_path = std::format("{}assets/shaders/source/{}", SDL_GetBasePath(), build_script);
-            //   const auto cmd = std::format("{}", full_path);
-            //   const int result = std::system(cmd.c_str());
-            //   if (result != 0)
-            //     SDL_Log("(shaders) Rebuild failed...");
-            //   if (result == 0)
-            //     SDL_Log("(shaders) Rebuild success...");
+            // Change working directory to assets/shaders/source and run compile.bat
+            const auto shader_dir = std::format("{}assets/shaders/source", SDL_GetBasePath());
+            const auto cmd = "cd \"" + shader_dir + "\" && compile.bat";
+            const int result = std::system(cmd.c_str());
+            if (result != 0)
+              SDL_Log("(shaders) Rebuild failed...");
+            if (result == 0)
+              SDL_Log("(shaders) Rebuild success...");
 
             fill_pipeline = CreateFillPipeline();
           }
