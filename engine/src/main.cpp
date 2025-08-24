@@ -1,15 +1,17 @@
 #include "core/pch.hpp"
 
 // #include "box2d_parallel.hpp"
-#include "app/imgui_helpers.hpp"
 #include "core/common.hpp"
 #include "core/maths/mat.hpp"
-#include "sdl_exception.hpp"
-#include "sdl_hot_reload_dll.hpp"
-#include "sdl_shader.hpp"
-#include "sdl_surface.hpp"
+#include "imgui_helpers.hpp"
+#include "renderer/renderer_helpers.hpp"
+#include "sdl/sdl_exception.hpp"
+#include "sdl/sdl_hot_reload_dll.hpp"
+#include "sdl/sdl_setup.hpp"
+#include "sdl/sdl_shader.hpp"
 #include "threadsafe_queue.hpp"
 using namespace game2d;
+using namespace std::literals;
 
 // docs: https://vkguide.dev/docs/introduction/vulkan_execution/
 // docs: https://vulkan-tutorial.com/Overview
@@ -44,13 +46,10 @@ using namespace game2d;
 // static constexpr Uint64 NS_PER_FIXED_TICK = 16 * 1e6; // or ~62.5 ticks per second
 static bool limit_fps = false;
 static int fps_limit = 240;
-constexpr int SDL_WINDOW_WIDTH = 1280;
-constexpr int SDL_WINDOW_HEIGHT = 720;
 
 // read/write buffers from game=>render thread
 // gamethread will GetWriteBuffer()
 // renderthread will GetReadBuffer()
-
 // clang-format off
 vec2 mouse_pos;
 RenderData rend_data[2];
@@ -367,173 +366,21 @@ CreateFillPipeline()
 void
 RenderThread()
 {
-  const auto info_str = std::format("(RenderThread) SDL_IsMainThread(): {}", SDL_IsMainThread());
-  SDL_Log("%s", info_str.c_str());
-
-  game2d::InitializeAssetLoader();
+  SDL_Log("%s", std::format("(RenderThread) SDL_IsMainThread(): {}", SDL_IsMainThread()).c_str());
 
   const uint32_t SPRITE_COUNT = 8192;
   const Matrix4x4 camera_proj = Matrix4x4_CreateOrthographicOffCenter(0, 1280, 720, 0, 0, -1);
 
-  SDL_GPUPresentMode present_mode = SDL_GPU_PRESENTMODE_VSYNC;
-  if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_IMMEDIATE))
-    present_mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
-  else if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_MAILBOX))
-    present_mode = SDL_GPU_PRESENTMODE_MAILBOX;
-  SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present_mode);
+  RendererInfo renderer_info;
+  renderer_info.device = device;
+  renderer_info.window = window;
+  setup_renderer(renderer_info);
 
-  SDL_GPUGraphicsPipeline* fill_pipeline = CreateFillPipeline();
-
-  const auto s0 = SDL_GPUSamplerCreateInfo{
-    .min_filter = SDL_GPU_FILTER_NEAREST,
-    .mag_filter = SDL_GPU_FILTER_NEAREST,
-    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
-    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-  };
-  const auto s1 = SDL_GPUSamplerCreateInfo{
-    .min_filter = SDL_GPU_FILTER_NEAREST,
-    .mag_filter = SDL_GPU_FILTER_NEAREST,
-    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
-    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-  };
-  const auto s2 = SDL_GPUSamplerCreateInfo{
-    .min_filter = SDL_GPU_FILTER_LINEAR,
-    .mag_filter = SDL_GPU_FILTER_LINEAR,
-    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
-    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-  };
-  const auto s3 = SDL_GPUSamplerCreateInfo{
-    .min_filter = SDL_GPU_FILTER_LINEAR,
-    .mag_filter = SDL_GPU_FILTER_LINEAR,
-    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
-    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-  };
-  const auto s4 = SDL_GPUSamplerCreateInfo{
-    .min_filter = SDL_GPU_FILTER_LINEAR,
-    .mag_filter = SDL_GPU_FILTER_LINEAR,
-    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
-    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
-    .max_anisotropy = 4,
-    .enable_anisotropy = true,
-  };
-  const auto s5 = SDL_GPUSamplerCreateInfo{
-    .min_filter = SDL_GPU_FILTER_LINEAR,
-    .mag_filter = SDL_GPU_FILTER_LINEAR,
-    .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR,
-    .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-    .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-    .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT,
-    .max_anisotropy = 4,
-    .enable_anisotropy = true,
-  };
-
-  //  "PointClamp", "PointWrap", "LinearClamp", "LinearWrap", "AnisotropicClamp", "AnisotropicWrap",
-  const auto samplers = std::vector{
-    SDL_CreateGPUSampler(device, &s0), SDL_CreateGPUSampler(device, &s1), SDL_CreateGPUSampler(device, &s2),
-    SDL_CreateGPUSampler(device, &s3), SDL_CreateGPUSampler(device, &s4), SDL_CreateGPUSampler(device, &s5),
-  };
-
-  /*
-  const Uint32 vertex_data_mem_size = sizeof(VertexFinal) * vertex_data.size();
-  const Uint32 index_data_mem_size = sizeof(Index) * index_data.size();
-
-  // Create the vertex buffer
-  const auto vertex_buffer_info = (SDL_GPUBufferCreateInfo){
-    .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
-    .size = vertex_data_mem_size,
-  };
-  auto vertex_buffer = SDL_CreateGPUBuffer(device, &vertex_buffer_info);
-  if (!vertex_buffer)
-    throw SDLException("Failed to create GpuBuffer");
-  SDL_SetGPUBufferName(device, vertex_buffer, "VertexBuffer");
-
-  // Create an index buffer
-  const auto index_buffer_info = (SDL_GPUBufferCreateInfo){
-    .usage = SDL_GPU_BUFFERUSAGE_INDEX,
-    .size = index_data_mem_size,
-  };
-  auto index_buffer = SDL_CreateGPUBuffer(device, &index_buffer_info);
-  if (!index_buffer)
-    throw SDLException("Failed to create GpuBuffer");
-  SDL_SetGPUBufferName(device, index_buffer, "IndexBuffer");
-
-//
-  // To get data in to the vertex buffer, we have to use a transfer buffer.
-  //
-  const auto transfer_buffer_info = (SDL_GPUTransferBufferCreateInfo){
-    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-    .size = vertex_data_mem_size + index_data_mem_size,
-  };
-
-  // Map the buffer in to cpu memory
-  auto* transfer_buffer = SDL_CreateGPUTransferBuffer(device, &transfer_buffer_info);
-  if (!transfer_buffer)
-    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
-
-  // Copy the data in
-
-  auto* ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
-
-  std::span vertex_buffer_data = { reinterpret_cast<VertexFinal*>(ptr), vertex_data.size() };
-  std::ranges::copy(vertex_data, vertex_buffer_data.begin());
-
-  std::span index_buffer_data = { reinterpret_cast<Index*>(ptr + vertex_data_mem_size), index_data.size() };
-  std::ranges::copy(index_data, index_buffer_data.begin());
-
-  SDL_UnmapGPUTransferBuffer(device, transfer_buffer); // note: need to unmap before aquire gpu command
-
-  */
-
-  // Load an image.
-  // SDL_Surface* image_data = LoadBMP("ravioli.bmp", 4);
-  SDL_Surface* image_data = LoadIMG("a_star.png");
-  if (!image_data) {
-    throw SDLException("Failed to load image.");
-    exit(SDL_APP_FAILURE); // explode
-  }
-
-  // Create a texture
-  SDL_GPUTextureCreateInfo texture_create_info = {
-    .type = SDL_GPU_TEXTURETYPE_2D,
-    .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-    .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
-    .width = static_cast<Uint32>(image_data->w),
-    .height = static_cast<Uint32>(image_data->h),
-    .layer_count_or_depth = 1,
-    .num_levels = 1,
-  };
-  auto* Texture = SDL_CreateGPUTexture(device, &texture_create_info);
-  if (!Texture) {
-    throw SDLException("Failed to CreateGPUTexture()");
-    exit(SDL_APP_FAILURE); // crash
-  }
-  SDL_SetGPUTextureName(device, Texture, "RavioliTexture");
-
-  // Start texture transfer buffer
-  const auto texture_transfer_buffer_create_info = SDL_GPUTransferBufferCreateInfo{
-    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-    .size = (Uint32)(image_data->w * image_data->h * 4),
-  };
-
-  // Map the buffer in to cpu memory
-  auto* texture_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &texture_transfer_buffer_create_info);
-  if (!texture_transfer_buffer)
-    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
-
-  // Copy data in to transfer buffer
-  auto* texture_ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, texture_transfer_buffer, false);
-  SDL_memcpy(texture_ptr, image_data->pixels, image_data->w * image_data->h * 4);
-  SDL_UnmapGPUTransferBuffer(device, texture_transfer_buffer);
+  auto* fill_pipeline = CreateFillPipeline();
+  auto texture_out = create_texture(device, "a_star.png"s);
+  auto* image_data = texture_out.image_data;
+  auto* texture = texture_out.texture;
+  auto* texture_transfer_buffer = texture_out.texture_transfer_buffer;
 
   const auto sprite_data_transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
@@ -565,7 +412,7 @@ RenderThread()
   // SDL_UploadToGPUBuffer(copy_pass, &i_buffer_location, &i_buffer_region, false);
 
   const auto ti = SDL_GPUTextureTransferInfo{ .transfer_buffer = texture_transfer_buffer, .offset = 0 /* zero out */ };
-  const auto tr = SDL_GPUTextureRegion{ .texture = Texture, .w = (Uint32)image_data->w, .h = (Uint32)image_data->h, .d = 1 };
+  const auto tr = SDL_GPUTextureRegion{ .texture = texture, .w = (Uint32)image_data->w, .h = (Uint32)image_data->h, .d = 1 };
   SDL_UploadToGPUTexture(copy_pass, &ti, &tr, false);
 
   SDL_EndGPUCopyPass(copy_pass);
@@ -688,6 +535,8 @@ RenderThread()
         SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, sprite_data_transfer_buffer, true);
         for (Uint32 i = 0; i < SPRITE_COUNT; i += 1) {
 
+          const bool draw = i < renderables.size();
+
           data_ptr[i].x = 0.0f;
           data_ptr[i].y = 0.0f;
           data_ptr[i].z = 0.0f;
@@ -695,7 +544,7 @@ RenderThread()
           data_ptr[i].w = 0.0f;
           data_ptr[i].h = 0.0f;
 
-          if (i < renderables.size()) {
+          if (draw) {
             const auto& transform = renderables[i].transform;
             data_ptr[i].x = transform.pos.x;
             data_ptr[i].y = transform.pos.y;
@@ -712,7 +561,7 @@ RenderThread()
           data_ptr[i].tex_w = 1.0f;
           data_ptr[i].tex_h = 1.0f;
 
-          if (i < renderables.size()) {
+          if (draw) {
             const auto& colour = renderables[i].colour;
             data_ptr[i].colour[0] = colour.r;
             data_ptr[i].colour[1] = colour.g;
@@ -764,8 +613,8 @@ RenderThread()
         // const SDL_GPUBufferBinding idx_buffer_binding = { .buffer = index_buffer, .offset = 0 };
         // SDL_BindGPUIndexBuffer(render_pass, &idx_buffer_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
 
-        auto& sampler = samplers[0];
-        const SDL_GPUTextureSamplerBinding tex_sampler_binding = { .texture = Texture, .sampler = sampler };
+        auto& sampler = renderer_info.samplers[0];
+        const auto tex_sampler_binding = SDL_GPUTextureSamplerBinding{ .texture = texture, .sampler = sampler };
         SDL_BindGPUFragmentSamplers(render_pass, 0, &tex_sampler_binding, 1);
 
         const auto view_projection = camera_view * camera_proj;
@@ -797,10 +646,9 @@ RenderThread()
     FrameMark; // frame done
   }
 
-  // Cleanup
   cleanup_imgui(device);
   SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
-  SDL_ReleaseGPUTexture(device, Texture);
+  SDL_ReleaseGPUTexture(device, texture);
   SDL_ReleaseGPUTransferBuffer(device, sprite_data_transfer_buffer);
   SDL_ReleaseGPUBuffer(device, sprite_data_buffer);
 };
@@ -826,74 +674,18 @@ main(int argc, char* argv[])
 {
   // setvbuf(stdout, nullptr, _IONBF, 0); // dont buffer
 
-#if defined(SDL_PLATFORM_WIN32)
-  SDL_Log("Hello, Windows!");
-#elif defined(SDL_PLATFORM_MACOS)
-  SDL_Log("Hello, Mac!");
-#elif defined(SDL_PLATFORM_LINUX)
-  SDL_Log("Hello, Linux!");
-#elif defined(SDL_PLATFORM_IOS)
-  SDL_Log("Hello, iOS!");
-#elif defined(SDL_PLATFORM_ANDROID);
-  SDL_Log("Hello, Android!");
-#else
-  SDL_Log("Hello, Unknown platform!");
-#endif
-
-  SDL_Log("Hello, MainThread!");
-  SDL_Log("You have %i logical cpu cores", SDL_GetNumLogicalCPUCores());
-  SDL_Log("(main()) SDL_IsMainThread(): %i", SDL_IsMainThread());
-  SDL_Log("SDL_Version: %i", SDL_GetVersion());
-
   if (!SDL_SetAppMetadata("SomeCoolGame", "1.0", "com.blueberrygames.game"))
     throw SDLException("Couldn't SDL_SetAppMetadata()");
-
   if (!SDL_Init(SDL_INIT_VIDEO))
     throw SDLException("Failed to SDL_Init(SDL_INIT_VIDEO)");
-
   if (!SDL_Init(SDL_INIT_JOYSTICK))
     throw SDLException("Failed to SDL_Init(SDL_INIT_JOYSTICK)");
 
-  // setup controllers.
-  int num_joysticks = 0;
-  const SDL_JoystickID* joysticks = SDL_GetJoysticks(&num_joysticks);
-  for (int i = 0; i < num_joysticks; i++) {
-    const SDL_JoystickID id = joysticks[i];
-    const auto* name = SDL_GetJoystickNameForID(id);
-    SDL_Log("Joystick %d: %s", i, name ? name : "Unknown");
-
-    const auto* instance = SDL_OpenJoystick(id);
-    if (instance)
-      SDL_Log("Joystick Connected: success");
-    else
-      SDL_Log("Joystick Connected: fail");
-  }
-
-  auto flags = SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_DXIL;
-#if defined(_DEBUG)
-  device = { SDL_CreateGPUDevice(flags, true, nullptr) };
-#else
-  device = { SDL_CreateGPUDevice(flags, false, nullptr) };
-#endif
-  if (device == NULL)
-    throw SDLException("Couldn't create GPU device");
-
-  // Call this only on the MainThread
-  SDL_Log("(RenderThread) -- CreateWindow");
-
-  float main_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-  SDL_Log("main_scale: %f", main_scale);
-
-  // SDL_CreateWindow: main thread
-  const auto window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-  const auto scale_x = (int)(SDL_WINDOW_WIDTH * main_scale);
-  const auto scale_y = (int)(SDL_WINDOW_HEIGHT * main_scale);
-  window = SDL_CreateWindow("Game", scale_x, scale_y, window_flags);
-  if (window == NULL)
-    throw SDLException("Couldn't SDL_CreateWindow()");
-
-  SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-  SDL_ShowWindow(window);
+  const float main_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+  setup_sdl();
+  setup_sdl_controllers();
+  device = setup_sdl_gpu();
+  window = setup_sdl_window(main_scale);
 
   if (!SDL_ClaimWindowForGPUDevice(device, window))
     throw SDLException("Couldn't claim window for GPU device");
@@ -902,10 +694,6 @@ main(int argc, char* argv[])
   if (!device_driver)
     throw SDLException("Couldn't get GPU device driver");
   SDL_Log("Using GPU device driver: %s", device_driver);
-
-  //
-  // Setup ImGUI
-  //
 
   ImGuiSetup im_setup;
   im_setup.game_ui_data = &game_ui_data;
@@ -935,7 +723,6 @@ main(int argc, char* argv[])
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, past);
     const Uint64 start_s = SDL_GetPerformanceCounter();
-    // tracy_connected = TracyIsConnected;
 
     bool rebuild_dll = false;
 
