@@ -25,14 +25,17 @@ include(${CMAKE_SOURCE_DIR}/cmake/build_misc.cmake)
 
 # TODO: compile as one static .exe when HOT_RELOAD 0
 set(HOT_RELOAD 1)
+set(TRACY_ENABLE 1)
+set(TRACY_CALLSTACK 1)
+set(TRACY_ON_DEMAND ON) # Only collect data when connected
 
+# set(TRACY_NO_EXIT ON) # Keep application running after main returns
 find_packages()
-find_package(Tracy CONFIG REQUIRED)
 
 FetchContent_Declare(
   tracy
   GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-  GIT_TAG v0.12.1
+  GIT_TAG v0.12.2
   GIT_SHALLOW TRUE
   GIT_PROGRESS TRUE
 )
@@ -100,6 +103,7 @@ target_include_directories(game PRIVATE
   ${CMAKE_SOURCE_DIR}/thirdparty/sdk/public
   ${CMAKE_SOURCE_DIR}/common/src
   ${CMAKE_SOURCE_DIR}/engine/src
+  ${tracy_SOURCE_DIR}
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "${LD_FLAGS}")

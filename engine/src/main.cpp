@@ -1,6 +1,7 @@
 #include "core/pch.hpp"
 
 // #include "box2d_parallel.hpp"
+#include "app/imgui_helpers.hpp"
 #include "core/common.hpp"
 #include "core/maths/mat.hpp"
 #include "sdl_exception.hpp"
@@ -9,8 +10,6 @@
 #include "sdl_surface.hpp"
 #include "threadsafe_queue.hpp"
 using namespace game2d;
-
-// clang-format off
 
 // docs: https://vkguide.dev/docs/introduction/vulkan_execution/
 // docs: https://vulkan-tutorial.com/Overview
@@ -23,7 +22,7 @@ using namespace game2d;
 // multithreading: https://github.com/SaschaWillems/Vulkan/blob/master/examples/multithreading/multithreading.cpp
 // instancing: https://github.com/SaschaWillems/Vulkan/blob/master/examples/instancing/instancing.cpp
 // pipeline stats: https://github.com/SaschaWillems/Vulkan/tree/master/examples/pipelinestatistics
-// deferred shading: https://github.com/SaschaWillems/Vulkan/tree/master/examples/deferred 
+// deferred shading: https://github.com/SaschaWillems/Vulkan/tree/master/examples/deferred
 // deferred shading: https://learnopengl.com/Advanced-Lighting/Deferred-Shading
 // gpu particles: https://github.com/SaschaWillems/Vulkan/tree/master/examples/computeparticles
 // cloth sim: https://github.com/SaschaWillems/Vulkan/tree/master/examples/computecloth
@@ -47,32 +46,33 @@ static bool limit_fps = false;
 static int fps_limit = 240;
 constexpr int SDL_WINDOW_WIDTH = 1280;
 constexpr int SDL_WINDOW_HEIGHT = 720;
-// clang-format off
 
 // read/write buffers from game=>render thread
 // gamethread will GetWriteBuffer()
 // renderthread will GetReadBuffer()
+
+// clang-format off
 vec2 mouse_pos;
 RenderData rend_data[2];
 std::atomic<int> current_read_buffer = 0;
 RenderData& GetWriteBuffer(){return rend_data[1 - current_read_buffer.load(std::memory_order_acquire)];};
 RenderData& GetReadBuffer(){return rend_data[current_read_buffer.load(std::memory_order_acquire)];};
 void SwapBuffers() {current_read_buffer.store(1 - current_read_buffer.load(), std::memory_order_release);};
+// clang-format on
 
 // data owned by game thread
 GameData game_data;
 
 // data owned by ui thread
-std::mutex game_ui_mtx;
-GameUIData game_ui_data;
+static std::mutex game_ui_mtx;
+static GameUIData game_ui_data;
 
-std::mutex rebuild_dll_mtx;
-sdl_game_code game_code;
+static std::mutex rebuild_dll_mtx;
+static sdl_game_code game_code;
 
-// clang-format on
-
-EventQueue<SDL_Event> event_queue;
-std::atomic<bool> running(true);
+static EventQueue<SDL_Event> game_event_queue;
+static EventQueue<SDL_Event> rend_event_queue;
+static std::atomic_bool running(true);
 static SDL_Window* window;
 static SDL_GPUDevice* device;
 
@@ -132,7 +132,7 @@ GameThread()
 
     // pop all the events at once from a thread-safe buffer.
     {
-      game_data.events = event_queue.dequeue_all();
+      game_data.events = game_event_queue.dequeue_all();
       game_data.mouse_pos = mouse_pos;
     }
 
@@ -158,11 +158,10 @@ GameThread()
 
       // FixedUpdate()
       {
+        ZoneScopedN("(GameThread) game_fixed_update()");
         std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
-        if (game_code.valid) {
-          ZoneScopedN("(GameThread) game_fixed_update()");
+        if (game_code.valid)
           game_code.game_fixed_update(&game_data);
-        }
       }
 
       // b2World_Step(game_data.world_id, physics_dt, physics_substep_count);
@@ -266,31 +265,19 @@ typedef struct SpriteInstance
   float colour[4];
 } SpriteInstance;
 
-void
-RenderThread()
+SDL_GPUGraphicsPipeline*
+CreateFillPipeline()
 {
-  const auto info_str = std::format("(RenderThread) SDL_IsMainThread(): {}", SDL_IsMainThread());
-  SDL_Log("%s", info_str.c_str());
+  SDL_GPUShader* vert_shader = nullptr;
+  SDL_GPUShader* frag_shader = nullptr;
 
-  game2d::InitializeAssetLoader();
-
-  const uint32_t SPRITE_COUNT = 8192;
-  const Matrix4x4 camera_proj = Matrix4x4_CreateOrthographicOffCenter(0, 1280, 720, 0, 0, -1);
-
-  SDL_GPUPresentMode present_mode = SDL_GPU_PRESENTMODE_VSYNC;
-  if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_IMMEDIATE))
-    present_mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
-  else if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_MAILBOX))
-    present_mode = SDL_GPU_PRESENTMODE_MAILBOX;
-  SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present_mode);
-
-  auto vert_shader = game2d::LoadShader(device, "PullSpriteBatch.vert", 0, 1, 1, 0);
+  vert_shader = game2d::LoadShader(device, "PullSpriteBatch.vert", 0, 1, 1, 0);
   if (vert_shader == NULL) {
     SDL_Log("Failed to create vert shader");
     exit(SDL_APP_FAILURE); // explode
   };
 
-  auto frag_shader = game2d::LoadShader(device, "SolidColorInput.frag", 1, 0, 0, 0);
+  frag_shader = game2d::LoadShader(device, "SolidColorInput.frag", 1, 0, 0, 0);
   if (frag_shader == NULL) {
     SDL_Log("Failed to create frag shader");
     exit(SDL_APP_FAILURE); // explode
@@ -356,29 +343,46 @@ RenderThread()
       .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
       .target_info =
           {
-              .color_target_descriptions = color_target_desc.data(),
-              .num_color_targets = (Uint32)color_target_desc.size(),
+            .color_target_descriptions = color_target_desc.data(),
+            .num_color_targets = (Uint32)color_target_desc.size(),
           },
   };
+
+  // pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
+  pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+  SDL_GPUGraphicsPipeline* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
+  if (fill_pipeline == nullptr) {
+    throw SDLException("Failed to create Fill GraphicsPipeline()");
+    exit(SDL_APP_FAILURE); // crash
+  }
 
   // can release shaders after creating pipelines
   SDL_Log("Releasing shaders... be free!");
   SDL_ReleaseGPUShader(device, vert_shader);
   SDL_ReleaseGPUShader(device, frag_shader);
 
-  pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-  auto* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
-  if (fill_pipeline == nullptr) {
-    throw SDLException("Failed to create Fill GraphicsPipeline()");
-    exit(SDL_APP_FAILURE); // crash
-  }
+  return fill_pipeline;
+};
 
-  pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
-  auto* line_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
-  if (line_pipeline == nullptr) {
-    throw SDLException("Failed to create Line GraphicsPipeline()");
-    exit(SDL_APP_FAILURE); // crash
-  }
+void
+RenderThread()
+{
+  const auto info_str = std::format("(RenderThread) SDL_IsMainThread(): {}", SDL_IsMainThread());
+  SDL_Log("%s", info_str.c_str());
+
+  game2d::InitializeAssetLoader();
+
+  const uint32_t SPRITE_COUNT = 8192;
+  const Matrix4x4 camera_proj = Matrix4x4_CreateOrthographicOffCenter(0, 1280, 720, 0, 0, -1);
+
+  SDL_GPUPresentMode present_mode = SDL_GPU_PRESENTMODE_VSYNC;
+  if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_IMMEDIATE))
+    present_mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+  else if (SDL_WindowSupportsGPUPresentMode(device, window, SDL_GPU_PRESENTMODE_MAILBOX))
+    present_mode = SDL_GPU_PRESENTMODE_MAILBOX;
+  SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present_mode);
+
+  SDL_GPUGraphicsPipeline* fill_pipeline = CreateFillPipeline();
 
   const auto s0 = SDL_GPUSamplerCreateInfo{
     .min_filter = SDL_GPU_FILTER_NEAREST,
@@ -587,8 +591,7 @@ RenderThread()
     const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
 
     // handoff: game thread pusning data in to gameuidata
-    // note: this doubles the memory,
-    // because its copying the entire RenderData
+    // note: this doubles the memory because its duplicating RenderData
     auto& read_buffer = GetReadBuffer();
     {
       ZoneScopedN("(RenderThread) read_buffer_copy");
@@ -602,12 +605,57 @@ RenderThread()
     const auto& renderables = game_ui_data.renderable;
     const Matrix4x4 camera_view = Matrix4x4_CreateView(game_ui_data.camera_pos);
 
+    //
+    // grab all the events
+    //
+    std::vector<SDL_Event> events;
+    {
+      ZoneScopedN("(RenderThread) events_dequeue_all()");
+      events = rend_event_queue.dequeue_all();
+    }
+
+    // check if a key was pressed.
+    {
+      ZoneScopedN("(RenderThread) events");
+      for (const auto& evt : events) {
+        if (evt.type == SDL_EVENT_KEY_DOWN) {
+          const auto scancode = evt.key.scancode;
+
+          if (scancode == SDL_SCANCODE_8) {
+            SDL_Log("(RenderThread) wants to rebuild shaders...");
+
+            SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
+
+            // for the moemnt, just just releasing and recreating the fill pipeline
+            // this is where the shader-hotreloading code will go
+
+            //   std::unique_lock lock(rebuild_dll_mtx);
+            //   SDL_Log("Rebuild shaders...");
+            //   const auto build_script = "compile.bat";
+            //   const auto full_path = std::format("{}assets/shaders/source/{}", SDL_GetBasePath(), build_script);
+            //   const auto cmd = std::format("{}", full_path);
+            //   const int result = std::system(cmd.c_str());
+            //   if (result != 0)
+            //     SDL_Log("(shaders) Rebuild failed...");
+            //   if (result == 0)
+            //     SDL_Log("(shaders) Rebuild success...");
+
+            fill_pipeline = CreateFillPipeline();
+          }
+        }
+      }
+    }
+
+    for (const auto& evt : events)
+      ImGui_ImplSDL3_ProcessEvent(&evt);
+
     // Start the Dear ImGui frame
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     ImGui::ShowDemoWindow(NULL);
 
+    // Update game ui
     {
       std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
       if (game_code.valid) {
@@ -634,7 +682,7 @@ RenderThread()
 
       if (swapchain_texture != nullptr && !is_minimized) {
         // This is mandatory: call Imgui_ImplSDLGPU3_PrepareDrawData() to upload the vertex/index buffer!
-        Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd_buf);
+        ImGui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd_buf);
 
         // Build sprite instance transfer
         SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, sprite_data_transfer_buffer, true);
@@ -732,6 +780,15 @@ RenderThread()
         SDL_EndGPURenderPass(render_pass);
       }
 
+      // Update and Render additional Platform Windows
+      // clang-format off
+      ImGuiIO& io = ImGui::GetIO(); (void)io;
+      // clang-format on
+      if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+        ImGui::UpdatePlatformWindows();
+        ImGui::RenderPlatformWindowsDefault();
+      }
+
       const auto submit = SDL_SubmitGPUCommandBuffer(cmd_buf);
       if (!submit)
         throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
@@ -741,8 +798,8 @@ RenderThread()
   }
 
   // Cleanup
+  cleanup_imgui(device);
   SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
-  SDL_ReleaseGPUGraphicsPipeline(device, line_pipeline);
   SDL_ReleaseGPUTexture(device, Texture);
   SDL_ReleaseGPUTransferBuffer(device, sprite_data_transfer_buffer);
   SDL_ReleaseGPUBuffer(device, sprite_data_buffer);
@@ -786,6 +843,7 @@ main(int argc, char* argv[])
   SDL_Log("Hello, MainThread!");
   SDL_Log("You have %i logical cpu cores", SDL_GetNumLogicalCPUCores());
   SDL_Log("(main()) SDL_IsMainThread(): %i", SDL_IsMainThread());
+  SDL_Log("SDL_Version: %i", SDL_GetVersion());
 
   if (!SDL_SetAppMetadata("SomeCoolGame", "1.0", "com.blueberrygames.game"))
     throw SDLException("Couldn't SDL_SetAppMetadata()");
@@ -823,40 +881,38 @@ main(int argc, char* argv[])
   // Call this only on the MainThread
   SDL_Log("(RenderThread) -- CreateWindow");
 
+  float main_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+  SDL_Log("main_scale: %f", main_scale);
+
   // SDL_CreateWindow: main thread
-  window = SDL_CreateWindow("Game", SDL_WINDOW_WIDTH, SDL_WINDOW_HEIGHT, 0);
+  const auto window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+  const auto scale_x = (int)(SDL_WINDOW_WIDTH * main_scale);
+  const auto scale_y = (int)(SDL_WINDOW_HEIGHT * main_scale);
+  window = SDL_CreateWindow("Game", scale_x, scale_y, window_flags);
   if (window == NULL)
     throw SDLException("Couldn't SDL_CreateWindow()");
 
+  SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
   SDL_ShowWindow(window);
-  SDL_SetWindowResizable(window, true);
 
   if (!SDL_ClaimWindowForGPUDevice(device, window))
     throw SDLException("Couldn't claim window for GPU device");
 
-  auto device_driver = SDL_GetGPUDeviceDriver(device);
+  auto* device_driver = SDL_GetGPUDeviceDriver(device);
+  if (!device_driver)
+    throw SDLException("Couldn't get GPU device driver");
   SDL_Log("Using GPU device driver: %s", device_driver);
 
   //
   // Setup ImGUI
   //
 
-  // clang-format off
-
-  IMGUI_CHECKVERSION();
-  game_ui_data.ctx = ImGui::CreateContext();
-  ImGuiIO& io = ImGui::GetIO(); (void)io;
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-  // Setup Platform/Renderer backends
-  ImGui_ImplSDL3_InitForSDLGPU(window);
-  ImGui_ImplSDLGPU3_InitInfo init_info = {};
-  init_info.Device = device;
-  init_info.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(device, window);
-  init_info.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
-  ImGui_ImplSDLGPU3_Init(&init_info);
-
-  // clang-format on
+  ImGuiSetup im_setup;
+  im_setup.game_ui_data = &game_ui_data;
+  im_setup.main_scale = main_scale;
+  im_setup.window = window;
+  im_setup.device = device;
+  setup_imgui(im_setup);
 
   // #elif __linux__
   //   "libGameDLL.so";
@@ -879,6 +935,7 @@ main(int argc, char* argv[])
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, past);
     const Uint64 start_s = SDL_GetPerformanceCounter();
+    // tracy_connected = TracyIsConnected;
 
     bool rebuild_dll = false;
 
@@ -890,7 +947,6 @@ main(int argc, char* argv[])
 
       SDL_Event evt;
       while (SDL_PollEvent(&evt)) {
-        ImGui_ImplSDL3_ProcessEvent(&evt);
 
         if (evt.type == SDL_EVENT_QUIT)
           running = false;
@@ -910,11 +966,11 @@ main(int argc, char* argv[])
     }
 
     // push all the events at once in to a thread-safe vector.
-    event_queue.enqueue(evts);
+    game_event_queue.enqueue(evts);
+    rend_event_queue.enqueue(evts);
 
     // Call SDL_GetMouseState on main thread.
     SDL_GetMouseState(&mouse_pos.x, &mouse_pos.y);
-    // SDL_GetWindowSize(&window);
 
     // Rebuild the dll
     if (rebuild_dll) {
@@ -941,7 +997,8 @@ main(int argc, char* argv[])
       }
     }
 
-    FrameMark; // frame done
+    SDL_Delay(1); // slow down the event thread
+    FrameMark;    // frame done
   }
 
   game_thread.join();
@@ -950,6 +1007,7 @@ main(int argc, char* argv[])
   SDL_ReleaseWindowFromGPUDevice(device, window);
   SDL_DestroyWindow(window);
   SDL_DestroyGPUDevice(device);
+  SDL_Quit();
 
   return 0;
 };

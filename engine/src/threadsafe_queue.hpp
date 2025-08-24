@@ -25,6 +25,13 @@ struct EventQueue
     return {};
   }
 
+  void clear()
+  {
+    std::lock_guard<std::mutex> lock(m);
+
+    data.clear();
+  }
+
 private:
   std::vector<T> data;
   mutable std::mutex m;

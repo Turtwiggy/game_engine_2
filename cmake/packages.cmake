@@ -1,15 +1,13 @@
 
 function(find_packages)
   message("checking compiler installed...")
-  find_program(CMAKE_C_COMPILER NAMES x86_64-w64-mingw32-gcc REQUIRED)
-  find_program(CMAKE_CXX_COMPILER NAMES x86_64-w64-mingw32-g++ REQUIRED)
-  find_program(CMAKE_RC_COMPILER NAMES x86_64-w64-mingw32-windres windres REQUIRED)
 
+  # find_program(CMAKE_C_COMPILER NAMES x86_64-w64-mingw32-gcc REQUIRED)
+  # find_program(CMAKE_CXX_COMPILER NAMES x86_64-w64-mingw32-g++ REQUIRED)
+  # find_program(CMAKE_RC_COMPILER NAMES x86_64-w64-mingw32-windres windres REQUIRED)
   message("finding packages...")
 
   find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
-
-  # find_package(SDL3 CONFIG REQUIRED)
   find_package(nlohmann_json CONFIG REQUIRED)
   find_package(Stb REQUIRED)
 

@@ -14,11 +14,7 @@
 // #include <backends/imgui_impl_vulkan.h>
 // clang-format on
 
-#if defined(_DEBUG)
-#if !defined(TRACY_ENABLE)
-#define TRACY_ENABLE
-#define TRACY_CALLSTACK
-#endif
+#if defined(_DEBUG) && defined(TRACY_ENABLE)
 #include <tracy/Tracy.hpp>
 #endif
 

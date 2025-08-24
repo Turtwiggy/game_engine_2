@@ -11,6 +11,11 @@ else()
   message("${CMAKE_SOURCE_DIR}")
   message("VCPKG TRIPLET: ${VCPKG_TARGET_TRIPLET}")
   set(CMAKE_TOOLCHAIN_FILE ${CMAKE_SOURCE_DIR}/thirdparty/vcpkg/scripts/buildsystems/vcpkg.cmake)
+
+  # note: if using vcpkg.json, packages are installed under vcpkg_installed/*
+  # else they're installed at e.g. thirdparty/vcpkg/installed/*
+  set(VCPKG_INSTALLED_DIR ${CMAKE_SOURCE_DIR}/vcpkg_installed)
+  message("VCPKG VCPKG_INSTALLED_DIR: ${VCPKG_INSTALLED_DIR}")
 endif()
 
 project(subprojects VERSION 0.1.0)
