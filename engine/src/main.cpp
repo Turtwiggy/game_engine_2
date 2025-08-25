@@ -65,8 +65,6 @@ GameData game_data;
 // data owned by ui thread
 static std::mutex game_ui_mtx;
 static GameUIData game_ui_data;
-
-static std::mutex rebuild_dll_mtx;
 static sdl_game_code game_code;
 
 static EventQueue<SDL_Event> game_event_queue;
@@ -125,7 +123,7 @@ GameThread()
 
     // update the game_data's ui data from the game_ui_data struct
     {
-      std::scoped_lock<std::mutex> lock(game_ui_mtx);
+      std::unique_lock<std::mutex> lock(game_ui_mtx);
       game_data.ui_data = game_ui_data.ui_data;
     }
 
@@ -136,14 +134,11 @@ GameThread()
     }
 
     // Check for rebuild
-    if (game_code.rebuilt) {
-      std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
+    if (game_code.rebuilt && game_code.valid) {
       SDL_Log("(GameThread) game_refresh()");
-      if (game_code.valid) {
-        game_code.game_refresh(&game_data);
-        game_code.game_init(&game_data);
-        game_code.rebuilt = false;
-      }
+      game_code.game_refresh(&game_data);
+      game_code.game_init(&game_data);
+      game_code.rebuilt = false;
     }
 
     // run physics at fixed timesteps
@@ -158,7 +153,6 @@ GameThread()
       // FixedUpdate()
       {
         ZoneScopedN("(GameThread) game_fixed_update()");
-        std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
         if (game_code.valid)
           game_code.game_fixed_update(&game_data);
       }
@@ -170,7 +164,6 @@ GameThread()
     // GameUpdate()
     {
       ZoneScopedN("(GameThread) game_update()");
-      std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
       if (game_code.valid)
         game_code.game_update(&game_data);
     }
@@ -185,19 +178,21 @@ GameThread()
       wb.renderable.clear();
       wb.ui_data.hmm.clear();
 
-      // copy transforms in to RenderData.
-      const auto view = game_data.r->view<const TransformComponent, const ColourComponent>();
-      view.each([&](entt::entity e, const auto& t_c, const auto& col_c) {
-        wb.renderable.push_back(Renderable{
-          .transform = t_c,
-          .colour = col_c,
+      if (game_code.valid) {
+        // copy transforms in to RenderData.
+        const auto view = game_data.r->view<const TransformComponent, const ColourComponent>();
+        view.each([&](entt::entity e, const auto& t_c, const auto& col_c) {
+          wb.renderable.push_back(Renderable{
+            .transform = t_c,
+            .colour = col_c,
+          });
         });
-      });
 
-      // copy anything else in to renderdata buffer.
-      wb.camera_pos = game_data.camera_pos;
-      wb.ui_data = game_data.ui_data;
-      wb.ui_data.game_dt = dt;
+        // copy anything else in to renderdata buffer.
+        wb.camera_pos = game_data.camera_pos;
+        wb.ui_data = game_data.ui_data;
+        wb.ui_data.game_dt = dt;
+      }
     }
 
     SwapBuffers();
@@ -264,103 +259,30 @@ typedef struct SpriteInstance
   float colour[4];
 } SpriteInstance;
 
+int
+RecompileShaders()
+{
+  // Change working directory to assets/shaders/source and run compile.bat
+  const auto shader_dir = std::format("{}assets/shaders/source", SDL_GetBasePath());
+  const auto cmd = "cd \"" + shader_dir + "\" && compile.bat";
+  const int result = std::system(cmd.c_str());
+  if (result != 0)
+    SDL_Log("(shaders) Rebuild failed...");
+  if (result == 0)
+    SDL_Log("(shaders) Rebuild success...");
+  return result;
+}
+
+SDL_GPUGraphicsPipeline*
+CreateErrorPipeline()
+{
+  return create_pipeline(device, window, "PullSpriteBatch.vert", "SolidColorInput.frag");
+};
+
 SDL_GPUGraphicsPipeline*
 CreateFillPipeline()
 {
-  SDL_GPUShader* vert_shader = nullptr;
-  SDL_GPUShader* frag_shader = nullptr;
-
-  vert_shader = game2d::LoadShader(device, "PullSpriteBatch.vert", 0, 1, 1, 0);
-  if (vert_shader == NULL) {
-    SDL_Log("Failed to create vert shader");
-    exit(SDL_APP_FAILURE); // explode
-  };
-
-  frag_shader = game2d::LoadShader(device, "SolidColorInput.frag", 1, 0, 0, 0);
-  if (frag_shader == NULL) {
-    SDL_Log("Failed to create frag shader");
-    exit(SDL_APP_FAILURE); // explode
-  };
-
-  const char* SamplerNames[] = {
-    "PointClamp", "PointWrap", "LinearClamp", "LinearWrap", "AnisotropicClamp", "AnisotropicWrap",
-  };
-
-  // using VertexFinal = PositionTextureVertex;
-
-  const std::vector<SDL_GPUColorTargetDescription> color_target_desc{
-      {.format = SDL_GetGPUSwapchainTextureFormat(device, window),
-       .blend_state =
-           {
-               .src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-               .dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-               .color_blend_op = SDL_GPU_BLENDOP_ADD,
-               .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-               .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-               .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
-               .enable_blend = true,
-           }},
-  };
-
-  // const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
-  //   {
-  //     .slot = 0,
-  //     .pitch = sizeof(VertexFinal),
-  //     .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
-  //     .instance_step_rate = 0,
-  //   },
-  // };
-
-  // Setup to match the vertex shader layout
-  // const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
-  //   {
-  //     // xyz is 3 floats
-  //     .location = 0,
-  //     .buffer_slot = 0,
-  //     .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
-  //     .offset = 0,
-  //   },
-  //   {
-  //     // uv is a 2 floats
-  //     .location = 1,
-  //     .buffer_slot = 0,
-  //     .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
-  //     .offset = offsetof(VertexFinal, u),
-  //   },
-  // };
-
-  // Create the pipelines.
-  SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
-      .vertex_shader = vert_shader,
-      .fragment_shader = frag_shader,
-      // .vertex_input_state = (SDL_GPUVertexInputState){
-      //   .vertex_buffer_descriptions = vertex_buffer_descriptions.data(),
-      //   .num_vertex_buffers = (Uint32)vertex_buffer_descriptions.size(),
-      //   .vertex_attributes = vertex_attributes.data(),
-      // 	.num_vertex_attributes = (Uint32)vertex_attributes.size(),
-      // },
-      .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
-      .target_info =
-          {
-            .color_target_descriptions = color_target_desc.data(),
-            .num_color_targets = (Uint32)color_target_desc.size(),
-          },
-  };
-
-  // pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
-  pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-  SDL_GPUGraphicsPipeline* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
-  if (fill_pipeline == nullptr) {
-    throw SDLException("Failed to create Fill GraphicsPipeline()");
-    exit(SDL_APP_FAILURE); // crash
-  }
-
-  // can release shaders after creating pipelines
-  SDL_Log("Releasing shaders... be free!");
-  SDL_ReleaseGPUShader(device, vert_shader);
-  SDL_ReleaseGPUShader(device, frag_shader);
-
-  return fill_pipeline;
+  return create_pipeline(device, window, "PullSpriteBatch.vert", "TexturedQuadColor.frag");
 };
 
 void
@@ -376,11 +298,13 @@ RenderThread()
   renderer_info.window = window;
   setup_renderer(renderer_info);
 
-  auto* fill_pipeline = CreateFillPipeline();
-  auto texture_out = create_texture(device, "a_star.png"s);
+  auto texture_out = create_texture(device, "custom.png"s);
+  auto texture_normal_out = create_texture(device, "custom_normals.png"s);
   auto* image_data = texture_out.image_data;
   auto* texture = texture_out.texture;
   auto* texture_transfer_buffer = texture_out.texture_transfer_buffer;
+
+  auto* fill_pipeline = CreateFillPipeline();
 
   const auto sprite_data_transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
@@ -442,8 +366,8 @@ RenderThread()
     auto& read_buffer = GetReadBuffer();
     {
       ZoneScopedN("(RenderThread) read_buffer_copy");
-      std::scoped_lock<std::mutex> lock0(read_buffer.mtx);
-      std::scoped_lock<std::mutex> lock1(game_ui_mtx);
+      std::unique_lock<std::mutex> lock0(read_buffer.mtx);
+      std::unique_lock<std::mutex> lock1(game_ui_mtx);
 
       game_ui_data.renderable = read_buffer.renderable; // take a copy
       game_ui_data.ui_data = read_buffer.ui_data;
@@ -470,21 +394,15 @@ RenderThread()
 
           if (scancode == SDL_SCANCODE_8) {
             SDL_Log("(RenderThread) wants to rebuild shaders...");
-            std::unique_lock lock(rebuild_dll_mtx);
 
             // releasing and recreate the fill pipeline (which uses the updated shaders)
             SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
 
-            // Change working directory to assets/shaders/source and run compile.bat
-            const auto shader_dir = std::format("{}assets/shaders/source", SDL_GetBasePath());
-            const auto cmd = "cd \"" + shader_dir + "\" && compile.bat";
-            const int result = std::system(cmd.c_str());
+            auto result = RecompileShaders();
             if (result != 0)
-              SDL_Log("(shaders) Rebuild failed...");
-            if (result == 0)
-              SDL_Log("(shaders) Rebuild success...");
-
-            fill_pipeline = CreateFillPipeline();
+              fill_pipeline = CreateErrorPipeline();
+            else if (result == 0)
+              fill_pipeline = CreateFillPipeline();
           }
         }
       }
@@ -501,7 +419,6 @@ RenderThread()
 
     // Update game ui
     {
-      std::scoped_lock<std::mutex> lock(rebuild_dll_mtx);
       if (game_code.valid) {
         ZoneScopedN("(RenderThread) game_update_ui()");
         game_code.game_update_ui(&game_ui_data);
@@ -699,6 +616,12 @@ main(int argc, char* argv[])
   im_setup.device = device;
   setup_imgui(im_setup);
 
+  int result = RecompileShaders();
+  if (result != 0) {
+    throw std::exception("Failed to compile shaders.");
+    exit(SDL_APP_FAILURE);
+  }
+
   // #elif __linux__
   //   "libGameDLL.so";
   // #elif __APPLE__
@@ -708,7 +631,7 @@ main(int argc, char* argv[])
   const auto dst_dll = "GameDLL-hot-locked.dll"; // when loaded, system processor locks it
 
   // Load GameDLL.dll on launch
-  game_code = sdl_load_game_code(src_dll, dst_dll);
+  sdl_load_game_code(game_code, src_dll, dst_dll);
 
   // Start threads, innit
   std::thread game_thread(GameThread);
@@ -758,9 +681,7 @@ main(int argc, char* argv[])
 
     // Rebuild the dll
     if (rebuild_dll) {
-      std::unique_lock lock(rebuild_dll_mtx);
-      // game_code.valid = false;
-
+      game_code.valid = false;
       SDL_Log("Rebuild dll...");
 
       // rebuild_dll
@@ -776,8 +697,7 @@ main(int argc, char* argv[])
       if (result == 0) {
         SDL_Log("Build success...");
         sdl_unload_game_code(&game_code);
-        game_code = sdl_load_game_code(src_dll, dst_dll);
-        game_code.rebuilt = true;
+        sdl_load_game_code(game_code, src_dll, dst_dll);
       }
     }
 

@@ -31,12 +31,12 @@ struct sdl_game_code
   game_update_ui_func_t game_update_ui;
   game_refresh_func_t game_refresh;
 
-  bool valid = false;
-  bool rebuilt = false;
+  std::atomic_bool valid{ false };
+  std::atomic_bool rebuilt{ false }; // rebuilt variable used to call game_init
 };
 
-sdl_game_code
-sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_name);
+void
+sdl_load_game_code(sdl_game_code& result, const std::string src_dll_name, const std::string dst_dll_name);
 
 void
 sdl_unload_game_code(sdl_game_code* game_code);

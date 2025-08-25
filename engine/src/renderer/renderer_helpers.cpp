@@ -5,7 +5,6 @@
 #include "sdl/sdl_exception.hpp"
 #include "sdl/sdl_shader.hpp"
 #include "sdl/sdl_surface.hpp"
-#include <SDL3/SDL_gpu.h>
 
 namespace game2d {
 
@@ -188,5 +187,104 @@ create_texture(SDL_GPUDevice* device, const std::string path)
   out.texture_transfer_buffer = texture_transfer_buffer;
   return out;
 }
+
+SDL_GPUGraphicsPipeline*
+create_pipeline(SDL_GPUDevice* device, SDL_Window* window, const std::string vert, const std::string frag)
+{
+  SDL_GPUShader* vert_shader = nullptr;
+  SDL_GPUShader* frag_shader = nullptr;
+
+  vert_shader = game2d::LoadShader(device, vert.c_str(), 0, 1, 1, 0);
+  if (vert_shader == NULL) {
+    SDL_Log("Failed to create vert shader");
+    exit(SDL_APP_FAILURE); // explode
+  };
+
+  frag_shader = game2d::LoadShader(device, frag.c_str(), 1, 0, 0, 0);
+  if (frag_shader == NULL) {
+    SDL_Log("Failed to create frag shader");
+    exit(SDL_APP_FAILURE); // explode
+  };
+
+  const char* SamplerNames[] = {
+    "PointClamp", "PointWrap", "LinearClamp", "LinearWrap", "AnisotropicClamp", "AnisotropicWrap",
+  };
+
+  // using VertexFinal = PositionTextureVertex;
+
+  const std::vector<SDL_GPUColorTargetDescription> color_target_desc{
+      {.format = SDL_GetGPUSwapchainTextureFormat(device, window),
+       .blend_state =
+           {
+               .src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+               .dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+               .color_blend_op = SDL_GPU_BLENDOP_ADD,
+               .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+               .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+               .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
+               .enable_blend = true,
+           }},
+  };
+
+  // const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
+  //   {
+  //     .slot = 0,
+  //     .pitch = sizeof(VertexFinal),
+  //     .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+  //     .instance_step_rate = 0,
+  //   },
+  // };
+
+  // Setup to match the vertex shader layout
+  // const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
+  //   {
+  //     // xyz is 3 floats
+  //     .location = 0,
+  //     .buffer_slot = 0,
+  //     .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+  //     .offset = 0,
+  //   },
+  //   {
+  //     // uv is a 2 floats
+  //     .location = 1,
+  //     .buffer_slot = 0,
+  //     .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+  //     .offset = offsetof(VertexFinal, u),
+  //   },
+  // };
+
+  // Create the pipelines.
+  SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
+      .vertex_shader = vert_shader,
+      .fragment_shader = frag_shader,
+      // .vertex_input_state = (SDL_GPUVertexInputState){
+      //   .vertex_buffer_descriptions = vertex_buffer_descriptions.data(),
+      //   .num_vertex_buffers = (Uint32)vertex_buffer_descriptions.size(),
+      //   .vertex_attributes = vertex_attributes.data(),
+      // 	.num_vertex_attributes = (Uint32)vertex_attributes.size(),
+      // },
+      .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+      .target_info =
+          {
+            .color_target_descriptions = color_target_desc.data(),
+            .num_color_targets = (Uint32)color_target_desc.size(),
+          },
+  };
+
+  // pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;
+  pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+  SDL_GPUGraphicsPipeline* fill_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
+  if (fill_pipeline == nullptr) {
+    throw SDLException("Failed to create Fill GraphicsPipeline()");
+    exit(SDL_APP_FAILURE); // crash
+  }
+
+  // can release shaders after creating pipelines
+  SDL_Log("Releasing shaders... be free!");
+  SDL_ReleaseGPUShader(device, vert_shader);
+  SDL_ReleaseGPUShader(device, frag_shader);
+
+  return fill_pipeline;
+};
 
 } // namespace game2d

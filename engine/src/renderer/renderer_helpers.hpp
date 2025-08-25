@@ -25,4 +25,7 @@ struct TextureOut
 TextureOut
 create_texture(SDL_GPUDevice* device, const std::string path);
 
+SDL_GPUGraphicsPipeline*
+create_pipeline(SDL_GPUDevice* device, SDL_Window* window, const std::string vert, const std::string frag);
+
 } // namespace game2d

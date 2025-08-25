@@ -195,15 +195,15 @@ game_init(GameData* data)
   const auto rnd_0_x = random(rnd, 100.0f, 450.0f);
   const auto rnd_1_x = random(rnd, 550.0f, 900.0f);
 
-  const auto provider_e = spawn(data, { rnd_0_x, 300 }, { 50, 50 }, { 1.0f, 0.0f, 0.0f });
+  const auto provider_e = spawn(data, { rnd_0_x, 300 }, { 32, 32 }, { 1.0f, 0.0f, 0.0f });
   r.emplace<ContainerProviderComponent>(provider_e);
   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto consumer_e = spawn(data, { rnd_1_x, 450 }, { 50, 50 }, { 0.0f, 1.0f, 0.0f });
+  const auto consumer_e = spawn(data, { rnd_1_x, 450 }, { 32, 32 }, { 0.0f, 1.0f, 0.0f });
   r.emplace<ContainerReceiverComponent>(consumer_e);
   r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
 
-  const auto player_e = spawn(data, { 500, 450 }, { 50, 50 }, { 0.0f, 0.0f, 1.0f }, false, true);
+  const auto player_e = spawn(data, { 500, 450 }, { 32, 32 }, { 0.0f, 0.0f, 1.0f }, false, true);
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
 

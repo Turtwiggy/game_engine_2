@@ -36,10 +36,11 @@ copy_file(const char* src_dll_name, const char* dst_dll_name)
   return true;
 };
 
-sdl_game_code
-sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_name)
+void
+sdl_load_game_code(sdl_game_code& result, const std::string src_dll_name, const std::string dst_dll_name)
 {
-  sdl_game_code result = { 0 };
+  result.valid = false;
+  result.rebuilt = false;
 
   auto copy_result = copy_file(src_dll_name.c_str(), dst_dll_name.c_str());
   if (!copy_result) {
@@ -101,7 +102,7 @@ sdl_load_game_code(const std::string src_dll_name, const std::string dst_dll_nam
 
   SDL_Log("Load DLL... success");
   result.valid = true;
-  return result;
+  result.rebuilt = true;
 };
 
 void
