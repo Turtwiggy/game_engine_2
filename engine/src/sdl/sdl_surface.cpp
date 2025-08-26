@@ -43,7 +43,7 @@ LoadBMP(const char* imageFilename, int desiredChannels)
   return result;
 };
 
-SDL_Surface*
+LoadIMGOut
 LoadIMG(const char* filename)
 {
   auto base_path = SDL_GetBasePath();
@@ -54,11 +54,12 @@ LoadIMG(const char* filename)
   int h = 0;
   int c = 0;
   unsigned char* data = stbi_load(full_path, &w, &h, &c, 0);
+
   if (!data) {
     auto err = std::format("Unable to find image: {}", full_path);
     throw std::runtime_error(err);
     stbi_image_free(data);
-    return nullptr;
+    return {};
   }
 
   SDL_PixelFormat format;
@@ -70,7 +71,7 @@ LoadIMG(const char* filename)
     stbi_image_free(data);
     auto err = std::format("Unsupported number of channels: {}", c);
     throw std::runtime_error(err);
-    return NULL;
+    return {};
   }
 
   // Pitch is the offset in bytes from one row of pixels to the next,
@@ -81,7 +82,7 @@ LoadIMG(const char* filename)
   if (!surface) {
     auto err = std::format("Unable to SDL_CreateSurfaceFrom(), file: {}", full_path);
     throw SDLException(err);
-    return NULL;
+    return {};
   }
 
   // note: data is not copied.
@@ -89,7 +90,10 @@ LoadIMG(const char* filename)
   // SDL_DestroySurface(surface);
   // stbi_image_free(data);
 
-  return surface;
+  LoadIMGOut out;
+  out.surface = surface;
+  out.data = data;
+  return out;
 };
 
 } // namespace game2d

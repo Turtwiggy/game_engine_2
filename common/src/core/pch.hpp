@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 #include <box2d/box2d.h>
 #include <entt/entt.hpp>
+#include <stb_image.h>
 
 // clang-format off
 #define IMGUI_DEFINE_MATH_OPERATORS

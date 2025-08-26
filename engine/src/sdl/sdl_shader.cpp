@@ -11,14 +11,14 @@ InitializeAssetLoader()
 }
 
 SDL_GPUShader*
-LoadShader(SDL_GPUDevice* device,
-           const char* shaderFilename,
-           const Uint32 samplerCount,
-           const Uint32 uniformBufferCount,
-           const Uint32 storageBufferCount,
-           const Uint32 storageTextureCount)
+LoadShader(SDL_GPUDevice* device, const ShaderInput& input)
 {
   auto BasePath = SDL_GetBasePath();
+  const char* shaderFilename = input.shaderFilename;
+  const Uint32 samplerCount = input.samplerCount;
+  const Uint32 uniformBufferCount = input.uniformBufferCount;
+  const Uint32 storageBufferCount = input.storageBufferCount;
+  const Uint32 storageTextureCount = input.storageTextureCount;
 
   // Auto-detect the shader stage from the file name for convenience
   SDL_GPUShaderStage stage;

@@ -32,7 +32,7 @@ static const float2 vertexPos[4] = {
 
 Output main(uint id : SV_VertexID)
 {
-    uint spriteIndex = id / 6;
+    uint spriteIndex = id / 6; // divide by 6 (number of verts)
     uint vert = triangleIndices[id % 6];
     SpriteData sprite = DataBuffer[spriteIndex];
 

@@ -9,7 +9,13 @@ LoadBMP(const char* imageFilename, int desiredChannels);
 
 // Apparently,
 // .jpg, .jpeg, .png, .bmp
-SDL_Surface*
+
+struct LoadIMGOut
+{
+  SDL_Surface* surface = nullptr;
+  unsigned char* data = nullptr;
+};
+LoadIMGOut
 LoadIMG(const char* filename);
 
 };

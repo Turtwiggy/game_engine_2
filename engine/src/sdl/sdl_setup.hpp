@@ -12,6 +12,6 @@ SDL_GPUDevice*
 setup_sdl_gpu();
 
 SDL_Window*
-setup_sdl_window(float main_scale);
+setup_sdl_window(float main_scale, int w, int h);
 
 } // namespace game2d

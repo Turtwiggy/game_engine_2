@@ -65,14 +65,11 @@ setup_sdl_gpu()
 }
 
 SDL_Window*
-setup_sdl_window(float main_scale)
+setup_sdl_window(float main_scale, int w, int h)
 {
-  constexpr int SDL_WINDOW_WIDTH = 1280;
-  constexpr int SDL_WINDOW_HEIGHT = 720;
-
   const auto window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-  const auto scale_x = (int)(SDL_WINDOW_WIDTH * main_scale);
-  const auto scale_y = (int)(SDL_WINDOW_HEIGHT * main_scale);
+  const auto scale_x = (int)(w * main_scale);
+  const auto scale_y = (int)(h * main_scale);
   SDL_Window* window = SDL_CreateWindow("Game", scale_x, scale_y, window_flags);
 
   if (window == NULL)

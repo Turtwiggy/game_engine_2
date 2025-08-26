@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sdl/sdl_shader.hpp"
+
 #include <SDL3/SDL_gpu.h>
 #include <entt/fwd.hpp>
 
@@ -18,14 +20,18 @@ setup_renderer(RendererInfo& ri);
 
 struct TextureOut
 {
-  SDL_Surface* image_data = nullptr;
+  int w = 0;
+  int h = 0;
   SDL_GPUTexture* texture = nullptr;
-  SDL_GPUTransferBuffer* texture_transfer_buffer = nullptr;
 };
+
+/*
+  https://github.com/ocornut/imgui/wiki/Image-Loading-and-Displaying-Examples#example-for-sdl_gpu-users
+*/
 TextureOut
 create_texture(SDL_GPUDevice* device, const std::string path);
 
 SDL_GPUGraphicsPipeline*
-create_pipeline(SDL_GPUDevice* device, SDL_Window* window, const std::string vert, const std::string frag);
+create_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag);
 
 } // namespace game2d

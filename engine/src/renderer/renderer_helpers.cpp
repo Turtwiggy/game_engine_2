@@ -141,8 +141,9 @@ create_texture(SDL_GPUDevice* device, const std::string path)
 {
   // Load an image.
   // SDL_Surface* image_data = LoadBMP("ravioli.bmp", 4);
-  SDL_Surface* image_data = LoadIMG(path.c_str());
-  if (!image_data) {
+  auto image_data = LoadIMG(path.c_str());
+
+  if (image_data.surface == nullptr || image_data.data == nullptr) {
     throw SDLException("Failed to load image.");
     exit(SDL_APP_FAILURE); // explode
   }
@@ -152,8 +153,8 @@ create_texture(SDL_GPUDevice* device, const std::string path)
     .type = SDL_GPU_TEXTURETYPE_2D,
     .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
     .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
-    .width = static_cast<Uint32>(image_data->w),
-    .height = static_cast<Uint32>(image_data->h),
+    .width = static_cast<Uint32>(image_data.surface->w),
+    .height = static_cast<Uint32>(image_data.surface->h),
     .layer_count_or_depth = 1,
     .num_levels = 1,
   };
@@ -168,7 +169,7 @@ create_texture(SDL_GPUDevice* device, const std::string path)
   // Start texture transfer buffer
   const auto texture_transfer_buffer_create_info = SDL_GPUTransferBufferCreateInfo{
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-    .size = (Uint32)(image_data->w * image_data->h * 4),
+    .size = (Uint32)(image_data.surface->w * image_data.surface->h * 4),
   };
 
   // Map the buffer in to cpu memory
@@ -178,29 +179,57 @@ create_texture(SDL_GPUDevice* device, const std::string path)
 
   // Copy data in to transfer buffer
   auto* texture_ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, texture_transfer_buffer, false);
-  SDL_memcpy(texture_ptr, image_data->pixels, image_data->w * image_data->h * 4);
+  SDL_memcpy(texture_ptr, image_data.surface->pixels, image_data.surface->w * image_data.surface->h * 4);
   SDL_UnmapGPUTransferBuffer(device, texture_transfer_buffer);
 
+  SDL_GPUTextureTransferInfo transfer_info = {};
+  transfer_info.offset = 0; /* zero out */
+  transfer_info.transfer_buffer = texture_transfer_buffer;
+
+  SDL_GPUTextureRegion texture_region = {};
+  texture_region.texture = Texture;
+  texture_region.x = (Uint32)0;
+  texture_region.y = (Uint32)0;
+  texture_region.w = (Uint32)texture_create_info.width;
+  texture_region.h = (Uint32)texture_create_info.height;
+  texture_region.d = 1;
+
+  // Upload.
+  auto* upload_cmd_buf = SDL_AcquireGPUCommandBuffer(device);
+  auto* copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
+  SDL_UploadToGPUTexture(copy_pass, &transfer_info, &texture_region, false);
+  SDL_EndGPUCopyPass(copy_pass);
+  if (!SDL_SubmitGPUCommandBuffer(upload_cmd_buf))
+    throw SDLException("Unable to SDL_SubmitGPUCommandBuffer()");
+
+  SDL_ReleaseGPUTransferBuffer(device, texture_transfer_buffer);
+
   TextureOut out;
-  out.image_data = image_data;
   out.texture = Texture;
-  out.texture_transfer_buffer = texture_transfer_buffer;
+  out.w = image_data.surface->w;
+  out.h = image_data.surface->h;
+
+  // note: data is not copied.
+  // must be freed in the order:
+  SDL_DestroySurface(image_data.surface);
+  stbi_image_free(image_data.data);
+
   return out;
-}
+};
 
 SDL_GPUGraphicsPipeline*
-create_pipeline(SDL_GPUDevice* device, SDL_Window* window, const std::string vert, const std::string frag)
+create_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag)
 {
   SDL_GPUShader* vert_shader = nullptr;
   SDL_GPUShader* frag_shader = nullptr;
 
-  vert_shader = game2d::LoadShader(device, vert.c_str(), 0, 1, 1, 0);
+  vert_shader = game2d::LoadShader(device, vert);
   if (vert_shader == NULL) {
     SDL_Log("Failed to create vert shader");
     exit(SDL_APP_FAILURE); // explode
   };
 
-  frag_shader = game2d::LoadShader(device, frag.c_str(), 1, 0, 0, 0);
+  frag_shader = game2d::LoadShader(device, frag);
   if (frag_shader == NULL) {
     SDL_Log("Failed to create frag shader");
     exit(SDL_APP_FAILURE); // explode
