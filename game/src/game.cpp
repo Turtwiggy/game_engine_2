@@ -21,6 +21,7 @@ static entt::registry internal_r;
 static bool refreshed = false;
 const auto screen_size = vec2(1280, 720); // todo: fix this
 
+static float stuff_size = 64.0f;
 static float camera_speed = 100;
 static vec2 camera_pos{ 0, 0 };
 static vec2 keyboard_l{ 0, 0 };
@@ -195,15 +196,15 @@ game_init(GameData* data)
   const auto rnd_0_x = random(rnd, 100.0f, 450.0f);
   const auto rnd_1_x = random(rnd, 550.0f, 900.0f);
 
-  const auto provider_e = spawn(data, { rnd_0_x, 300 }, { 64, 64 }, { 1.0f, 0.0f, 0.0f });
+  const auto provider_e = spawn(data, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f });
   r.emplace<ContainerProviderComponent>(provider_e);
   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto consumer_e = spawn(data, { rnd_1_x, 450 }, { 64, 64 }, { 0.0f, 1.0f, 0.0f });
+  const auto consumer_e = spawn(data, { rnd_1_x, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f });
   r.emplace<ContainerReceiverComponent>(consumer_e);
   r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
 
-  const auto player_e = spawn(data, { 500, 450 }, { 64, 64 }, { 0.0f, 0.0f, 1.0f }, false, true);
+  const auto player_e = spawn(data, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 0.0f, 1.0f }, false, true);
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
 
@@ -419,7 +420,7 @@ game_update(GameData* data)
       }
 
       if (m_evt.button == SDL_BUTTON_RIGHT) {
-        spawn(data, data->mouse_pos, { 64, 64 }, { 1.0, 1.0, 1.0 });
+        spawn(data, data->mouse_pos, { stuff_size, stuff_size }, { 1.0, 1.0, 1.0 });
       }
     }
 
@@ -629,6 +630,10 @@ game_update_ui(GameUIData* ui_data)
 
     ImGui::Text("Input");
     ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
+
+    ImGui::Text("MouseInput");
+    auto& io = ImGui::GetIO();
+    ImGui::Text("%f %f", io.MousePos.x, io.MousePos.y);
 
     ImGui::End();
   }

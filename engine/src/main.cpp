@@ -274,6 +274,11 @@ RecompileShaders()
   return result;
 }
 
+//
+// note: if you get an error in RenderDoc about descriptor set not bound,
+// make sure that e.g. the samplerCount in ShaderInput matches the expected Samplers in the shader.
+//
+
 SDL_GPUGraphicsPipeline*
 CreateErrorPipeline()
 {
@@ -305,8 +310,8 @@ CreateSpritePipeline()
     .storageTextureCount = 0,
   };
   const ShaderInput frag_input{
-    .shaderFilename = "Sprite.frag",
-    .samplerCount = 2,
+    .shaderFilename = "SpriteSheet.frag",
+    .samplerCount = 1,
     .uniformBufferCount = 0,
     .storageBufferCount = 0,
     .storageTextureCount = 0,
@@ -324,13 +329,58 @@ CreateSpriteNormalPipeline()
     .storageTextureCount = 0,
   };
   const ShaderInput frag_input{
-    .shaderFilename = "SpriteNormals.frag",
+    .shaderFilename = "SpriteSheetNormals.frag",
     .samplerCount = 1,
     .uniformBufferCount = 0,
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
   return create_pipeline(device, window, vert_input, frag_input);
+};
+SDL_GPUGraphicsPipeline*
+CreateLightingPipeline()
+{
+  const ShaderInput vert_input{
+    .shaderFilename = "PullSpriteBatch.vert",
+    .samplerCount = 0,
+    .uniformBufferCount = 1,
+    .storageBufferCount = 1,
+    .storageTextureCount = 0,
+  };
+  const ShaderInput frag_input{
+    .shaderFilename = "Lighting.frag",
+    .samplerCount = 2,
+    .uniformBufferCount = 1,
+    .storageBufferCount = 0,
+    .storageTextureCount = 0,
+  };
+  return create_pipeline(device, window, vert_input, frag_input);
+}
+
+SDL_GPUTransferBuffer*
+create_sprite_data_transfer_buffer(const int SPRITE_COUNT)
+{
+  const auto sprite_data_transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
+    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+    .size = static_cast<Uint32>(SPRITE_COUNT * sizeof(SpriteInstance)),
+  };
+  auto* sprite_data_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &sprite_data_transfer_buffer_info);
+  if (!sprite_data_transfer_buffer)
+    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
+  return sprite_data_transfer_buffer;
+};
+
+SDL_GPUBuffer*
+create_sprite_data_buffer(const int SPRITE_COUNT)
+{
+  const auto sprite_data_buffer_info = SDL_GPUBufferCreateInfo{
+    .usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+    .size = static_cast<Uint32>(SPRITE_COUNT * sizeof(SpriteInstance)),
+  };
+  auto* sprite_data_buffer = SDL_CreateGPUBuffer(device, &sprite_data_buffer_info);
+  if (!sprite_data_buffer)
+    throw SDLException("Unable to SDL_CreateGPUBuffer()");
+  return sprite_data_buffer;
 };
 
 void
@@ -347,46 +397,37 @@ RenderThread()
   setup_renderer(renderer_info);
 
   const auto custom_texture_out = create_texture(device, "custom.png"s);
-  const auto custom_texture_normal_out = create_texture(device, "custom_normals.png"s);
-  auto* fill_pipeline = CreateSpritePipeline();
+  const auto custom_texture_normal_out = create_texture(device, "custom_normal.png"s);
+  auto* sprite_pipeline = CreateSpritePipeline();
   auto* normal_pipeline = CreateSpriteNormalPipeline();
+  auto* lighting_pipeline = CreateLightingPipeline();
   auto* error_pipeline = CreateErrorPipeline();
+  auto* sprite_data_transfer_buffer = create_sprite_data_transfer_buffer(SPRITE_COUNT);
+  auto* sprite_data_buffer = create_sprite_data_buffer(SPRITE_COUNT);
+  auto* quad_data_transfer_buffer = create_sprite_data_transfer_buffer(1); // fullscreen quad
+  auto* quad_data_buffer = create_sprite_data_buffer(1);
 
-  const auto sprite_data_transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
-    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-    .size = SPRITE_COUNT * sizeof(SpriteInstance),
+  const auto create_render_texture = []() -> SDL_GPUTexture* {
+    // The contents of this texture are undefined until data is written to the texture,
+    // either via SDL_UploadToGpuTexture, or by performaing a render or compute pass with
+    // this texture as a target.
+    const SDL_GPUTextureCreateInfo gpu_texture_info = {
+      .type = SDL_GPU_TEXTURETYPE_2D,
+      .format = SDL_GetGPUSwapchainTextureFormat(device, window),
+      .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+      .width = (Uint32)2.0f * window_w,
+      .height = (Uint32)2.0f * window_h,
+      .layer_count_or_depth = 1,
+      .num_levels = 1,
+      .sample_count = SDL_GPU_SAMPLECOUNT_1,
+    };
+    SDL_GPUTexture* gpu_texture = SDL_CreateGPUTexture(device, &gpu_texture_info);
+    if (gpu_texture == nullptr)
+      throw SDLException("Unable to SDL_CreateGPUTexture()");
+    return gpu_texture;
   };
-  auto* sprite_data_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &sprite_data_transfer_buffer_info);
-  if (!sprite_data_transfer_buffer)
-    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
-
-  const auto sprite_data_buffer_info = SDL_GPUBufferCreateInfo{
-    .usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
-    .size = SPRITE_COUNT * sizeof(SpriteInstance),
-  };
-  auto* sprite_data_buffer = SDL_CreateGPUBuffer(device, &sprite_data_buffer_info);
-  if (!sprite_data_buffer)
-    throw SDLException("Unable to SDL_CreateGPUBuffer()");
-
-  const SDL_GPUViewport small_viewport = { 160, 120, 320, 240, 0.1f, 1.0f };
-  const SDL_Rect scissor_rect = { 320, 240, 320, 240 };
-
-  // The contents of this texture are undefined until data is written to the texture,
-  // either via SDL_UploadToGpuTexture, or by performaing a render or compute pass with
-  // this texture as a target.
-  const SDL_GPUTextureCreateInfo gpu_texture_info = {
-    .type = SDL_GPU_TEXTURETYPE_2D,
-    .format = SDL_GetGPUSwapchainTextureFormat(device, window),
-    .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
-    .width = (Uint32)window_w,
-    .height = (Uint32)window_h,
-    .layer_count_or_depth = 1,
-    .num_levels = 1,
-    .sample_count = SDL_GPU_SAMPLECOUNT_1,
-  };
-  SDL_GPUTexture* gpu_texture = SDL_CreateGPUTexture(device, &gpu_texture_info);
-  if (gpu_texture == nullptr)
-    throw SDLException("Unable to SDL_CreateGPUTexture()");
+  auto* gpu_texture_a = create_render_texture();
+  auto* gpu_texture_b = create_render_texture();
 
   SDL_Log("(RenderThread) -- done init");
   // SignalRenderThread(); // done init()
@@ -436,13 +477,20 @@ RenderThread()
             SDL_Log("(RenderThread) wants to rebuild shaders...");
 
             // releasing and recreate the fill pipeline (which uses the updated shaders)
-            SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
+            SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
+            SDL_ReleaseGPUGraphicsPipeline(device, normal_pipeline);
+            SDL_ReleaseGPUGraphicsPipeline(device, lighting_pipeline);
 
             auto result = RecompileShaders();
-            if (result != 0)
-              fill_pipeline = CreateErrorPipeline();
-            else if (result == 0)
-              fill_pipeline = CreateSpritePipeline();
+            if (result != 0) {
+              sprite_pipeline = CreateErrorPipeline();
+              normal_pipeline = CreateErrorPipeline();
+              lighting_pipeline = CreateErrorPipeline();
+            } else if (result == 0) {
+              sprite_pipeline = CreateSpritePipeline();
+              normal_pipeline = CreateSpriteNormalPipeline();
+              lighting_pipeline = CreateLightingPipeline();
+            }
           }
         }
       }
@@ -457,9 +505,17 @@ RenderThread()
     ImGui::NewFrame();
     ImGui::ShowDemoWindow(NULL);
 
-    ImGui::Begin("GpuTexture");
-    auto wh = ImGui::GetContentRegionAvail();
-    ImGui::Image((ImTextureID)(intptr_t)gpu_texture, wh);
+    ImGui::Begin("GpuTextureA");
+    {
+      const auto wh = ImGui::GetContentRegionAvail();
+      ImGui::Image((ImTextureID)(intptr_t)gpu_texture_a, wh);
+    }
+    ImGui::End();
+    ImGui::Begin("GpuTextureB");
+    {
+      const auto wh = ImGui::GetContentRegionAvail();
+      ImGui::Image((ImTextureID)(intptr_t)gpu_texture_b, wh);
+    }
     ImGui::End();
 
     // Update game ui
@@ -486,67 +542,135 @@ RenderThread()
         exit(SDL_APP_FAILURE); // crash
       }
 
-      // Build sprite instance transfer
-      SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, sprite_data_transfer_buffer, true);
-      for (Uint32 i = 0; i < SPRITE_COUNT; i += 1) {
-
-        const bool draw = i < renderables.size();
-
-        data_ptr[i].x = 0.0f;
-        data_ptr[i].y = 0.0f;
-        data_ptr[i].z = 0.0f;
-        data_ptr[i].rotation = 0.0f;
-        data_ptr[i].w = 0.0f;
-        data_ptr[i].h = 0.0f;
-
-        if (draw) {
-          const auto& transform = renderables[i].transform;
-          data_ptr[i].x = transform.pos.x;
-          data_ptr[i].y = transform.pos.y;
-          data_ptr[i].z = 0.0f;
-          data_ptr[i].rotation = transform.rotation_radians;
-          data_ptr[i].w = transform.size.x;
-          data_ptr[i].h = transform.size.y;
-        }
-
-        data_ptr[i].p1 = 0.0f;
-        data_ptr[i].p2 = 0.0f;
-        data_ptr[i].tex_u = 0.0f;
-        data_ptr[i].tex_v = 0.0f;
-        data_ptr[i].tex_w = 1.0f;
-        data_ptr[i].tex_h = 1.0f;
-
-        if (draw) {
-          const auto& colour = renderables[i].colour;
-          data_ptr[i].colour[0] = colour.r;
-          data_ptr[i].colour[1] = colour.g;
-          data_ptr[i].colour[2] = colour.b;
-          data_ptr[i].colour[3] = colour.a;
-        }
-      }
-      SDL_UnmapGPUTransferBuffer(device, sprite_data_transfer_buffer);
-
-      // Upload instance data.
-      SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buf);
+      // Sprites => GPU
       {
-        const auto transfer_buffer_loc = SDL_GPUTransferBufferLocation{
-          .transfer_buffer = sprite_data_transfer_buffer,
-          .offset = 0,
-        };
-        const auto gpu_buffer_region_loc = SDL_GPUBufferRegion{
-          .buffer = sprite_data_buffer,
-          .offset = 0,
-          .size = SPRITE_COUNT * sizeof(SpriteInstance),
-        };
-        SDL_UploadToGPUBuffer(copy_pass, &transfer_buffer_loc, &gpu_buffer_region_loc, true);
-      }
-      SDL_EndGPUCopyPass(copy_pass);
+        // Build sprite instance transfer
+        SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, sprite_data_transfer_buffer, true);
+        for (Uint32 i = 0; i < SPRITE_COUNT; i += 1) {
 
-      // render the normals to a texture
-      //
+          const bool draw = i < renderables.size();
+
+          data_ptr[i].x = 0.0f;
+          data_ptr[i].y = 0.0f;
+          data_ptr[i].z = 0.0f;
+          data_ptr[i].rotation = 0.0f;
+          data_ptr[i].w = 0.0f;
+          data_ptr[i].h = 0.0f;
+
+          if (draw) {
+            const auto& transform = renderables[i].transform;
+            data_ptr[i].x = transform.pos.x;
+            data_ptr[i].y = transform.pos.y;
+            data_ptr[i].z = 0.0f;
+            data_ptr[i].rotation = transform.rotation_radians;
+            data_ptr[i].w = transform.size.x;
+            data_ptr[i].h = transform.size.y;
+          }
+
+          data_ptr[i].p1 = 0.0f;
+          data_ptr[i].p2 = 0.0f;
+          data_ptr[i].tex_u = 0.0f;
+          data_ptr[i].tex_v = 0.0f;
+          data_ptr[i].tex_w = 1.0f;
+          data_ptr[i].tex_h = 1.0f;
+
+          if (draw) {
+            const auto& colour = renderables[i].colour;
+            data_ptr[i].colour[0] = colour.r;
+            data_ptr[i].colour[1] = colour.g;
+            data_ptr[i].colour[2] = colour.b;
+            data_ptr[i].colour[3] = colour.a;
+          }
+        }
+        SDL_UnmapGPUTransferBuffer(device, sprite_data_transfer_buffer);
+
+        // Upload instance data.
+        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buf);
+        {
+          const auto transfer_buffer_loc = SDL_GPUTransferBufferLocation{
+            .transfer_buffer = sprite_data_transfer_buffer,
+            .offset = 0,
+          };
+          const auto gpu_buffer_region_loc = SDL_GPUBufferRegion{
+            .buffer = sprite_data_buffer,
+            .offset = 0,
+            .size = SPRITE_COUNT * sizeof(SpriteInstance),
+          };
+          SDL_UploadToGPUBuffer(copy_pass, &transfer_buffer_loc, &gpu_buffer_region_loc, true);
+        }
+        SDL_EndGPUCopyPass(copy_pass);
+      }
+
+      // Upload exactly 1 quad to the quad_data_buffer.
+      {
+        // Build sprite instance transfer
+        SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, quad_data_transfer_buffer, true);
+        data_ptr[0].x = 0.0f;
+        data_ptr[0].y = 0.0f;
+        data_ptr[0].z = 0.0f;
+        data_ptr[0].rotation = 0.0f;
+        data_ptr[0].w = (float)window_w;
+        data_ptr[0].h = (float)window_h;
+        data_ptr[0].p1 = 0.0f;
+        data_ptr[0].p2 = 0.0f;
+        data_ptr[0].tex_u = 0.0f;
+        data_ptr[0].tex_v = 0.0f;
+        data_ptr[0].tex_w = 1.0f;
+        data_ptr[0].tex_h = 1.0f;
+        data_ptr[0].colour[0] = 1.0f;
+        data_ptr[0].colour[1] = 0.0f;
+        data_ptr[0].colour[2] = 0.0f;
+        data_ptr[0].colour[3] = 1.0f;
+        SDL_UnmapGPUTransferBuffer(device, quad_data_transfer_buffer);
+
+        // Upload instance data.
+        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buf);
+        {
+          const auto transfer_buffer_loc = SDL_GPUTransferBufferLocation{
+            .transfer_buffer = quad_data_transfer_buffer,
+            .offset = 0,
+          };
+          const auto gpu_buffer_region_loc = SDL_GPUBufferRegion{
+            .buffer = quad_data_buffer,
+            .offset = 0,
+            .size = 1 * sizeof(SpriteInstance),
+          };
+          SDL_UploadToGPUBuffer(copy_pass, &transfer_buffer_loc, &gpu_buffer_region_loc, true);
+        }
+        SDL_EndGPUCopyPass(copy_pass);
+      }
+
+      // render the sprites to a texture
       {
         const SDL_GPUColorTargetInfo col_info_a = {
-          .texture = gpu_texture,
+          .texture = gpu_texture_a,
+          .mip_level = 0,
+          .layer_or_depth_plane = 0,
+          .clear_color = SDL_FColor{ 0.0f, 0.0f, 0.0f, 1.0f },
+          .load_op = SDL_GPU_LOADOP_CLEAR,
+          .store_op = SDL_GPU_STOREOP_STORE,
+          .cycle = false,
+        };
+        SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, &col_info_a, 1, NULL);
+        {
+          SDL_BindGPUGraphicsPipeline(render_pass, sprite_pipeline);
+          SDL_BindGPUVertexStorageBuffers(render_pass, 0, &sprite_data_buffer, 1);
+          SDL_PushGPUVertexUniformData(cmd_buf, 0, &view_projection, sizeof(Matrix4x4));
+
+          const auto fragment_samplers = std::vector<SDL_GPUTextureSamplerBinding>{
+            { .texture = custom_texture_out.texture, .sampler = renderer_info.samplers[0] },
+          };
+          SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers.data(), (uint32_t)fragment_samplers.size());
+
+          SDL_DrawGPUPrimitives(render_pass, SPRITE_COUNT * 6, 1, 0, 0);
+        }
+        SDL_EndGPURenderPass(render_pass);
+      }
+
+      // render the sprite normals to a texture
+      {
+        const SDL_GPUColorTargetInfo col_info_a = {
+          .texture = gpu_texture_b,
           .mip_level = 0,
           .layer_or_depth_plane = 0,
           .clear_color = SDL_FColor{ 0.0f, 0.0f, 0.0f, 1.0f },
@@ -563,7 +687,7 @@ RenderThread()
           const auto fragment_samplers = std::vector<SDL_GPUTextureSamplerBinding>{
             { .texture = custom_texture_normal_out.texture, .sampler = renderer_info.samplers[0] },
           };
-          SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers.data(), fragment_samplers.size());
+          SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers.data(), (uint32_t)fragment_samplers.size());
 
           SDL_DrawGPUPrimitives(render_pass, SPRITE_COUNT * 6, 1, 0, 0);
         }
@@ -582,6 +706,9 @@ RenderThread()
         // Render the final output to the swapchain_texture
         //
         {
+          SDL_PushGPUVertexUniformData(cmd_buf, 0, &view_projection, sizeof(Matrix4x4));
+          SDL_PushGPUFragmentUniformData(cmd_buf, 0, &mouse_pos, sizeof(mouse_pos));
+
           const SDL_GPUColorTargetInfo col_info = {
             .texture = swapchain_texture,
             .mip_level = 0,
@@ -591,20 +718,20 @@ RenderThread()
             .store_op = SDL_GPU_STOREOP_STORE,
             .cycle = false,
           };
+
           SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, &col_info, 1, NULL);
           {
-            SDL_BindGPUGraphicsPipeline(render_pass, fill_pipeline);
-            SDL_BindGPUVertexStorageBuffers(render_pass, 0, &sprite_data_buffer, 1);
-            SDL_PushGPUVertexUniformData(cmd_buf, 0, &view_projection, sizeof(Matrix4x4));
+            SDL_BindGPUGraphicsPipeline(render_pass, lighting_pipeline);
+            SDL_BindGPUVertexStorageBuffers(render_pass, 0, &quad_data_buffer, 1);
 
-            const auto fragment_samplers = std::vector<SDL_GPUTextureSamplerBinding>{
-              { .texture = custom_texture_out.texture, .sampler = renderer_info.samplers[0] },
-              { .texture = gpu_texture, .sampler = renderer_info.samplers[0] },
+            const SDL_GPUTextureSamplerBinding fragment_samplers[2] = {
+              { .texture = gpu_texture_a, .sampler = renderer_info.samplers[0] },
+              { .texture = gpu_texture_b, .sampler = renderer_info.samplers[0] },
             };
-            SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers.data(), fragment_samplers.size());
+            SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers, 2);
 
-            SDL_DrawGPUPrimitives(render_pass, SPRITE_COUNT * 6, 1, 0, 0);
-            // SDL_DrawGPUIndexedPrimitives(render_pass, index_data.size(), 1, 0, 0, 0);
+            // Render one, full screen quad.
+            SDL_DrawGPUPrimitives(render_pass, 1 * 6, 1, 0, 0);
 
             // in the main swapchain texture, call renderdrawdata
             ImGui_ImplSDLGPU3_RenderDrawData(draw_data, cmd_buf, render_pass);
@@ -632,8 +759,9 @@ RenderThread()
 
   SDL_Log("(RenderThread) shutting down...");
   cleanup_imgui(device);
-  SDL_ReleaseGPUGraphicsPipeline(device, fill_pipeline);
-  SDL_ReleaseGPUTexture(device, gpu_texture);
+  SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
+  SDL_ReleaseGPUTexture(device, gpu_texture_a);
+  SDL_ReleaseGPUTexture(device, gpu_texture_b);
   SDL_ReleaseGPUTexture(device, custom_texture_out.texture);
   SDL_ReleaseGPUTexture(device, custom_texture_normal_out.texture);
   SDL_ReleaseGPUTransferBuffer(device, sprite_data_transfer_buffer);

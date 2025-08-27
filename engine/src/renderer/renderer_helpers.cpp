@@ -4,7 +4,6 @@
 #include "renderer_helpers.hpp"
 #include "sdl/sdl_exception.hpp"
 #include "sdl/sdl_shader.hpp"
-#include "sdl/sdl_surface.hpp"
 
 namespace game2d {
 
@@ -140,36 +139,49 @@ TextureOut
 create_texture(SDL_GPUDevice* device, const std::string path)
 {
   // Load an image.
-  // SDL_Surface* image_data = LoadBMP("ravioli.bmp", 4);
-  auto image_data = LoadIMG(path.c_str());
+  auto base_path = SDL_GetBasePath();
+  char full_path[256];
+  SDL_snprintf(full_path, sizeof(full_path), "%sassets/textures/%s", base_path, path.c_str());
+  SDL_Log("Loading image: %s", full_path);
 
-  if (image_data.surface == nullptr || image_data.data == nullptr) {
-    throw SDLException("Failed to load image.");
-    exit(SDL_APP_FAILURE); // explode
+  int w = 0;
+  int h = 0;
+  int c = 0;
+  unsigned char* data = stbi_load(full_path, &w, &h, &c, 0);
+
+  if (data == NULL) {
+    throw std::runtime_error(std::format("Unable to find image: {}", full_path));
+    return {};
   }
 
-  // Create a texture
+  if (c != 4) {
+    throw std::runtime_error(std::format("Unsupported number of channels {}", c));
+    return {};
+  }
+
+  // Create texture
   SDL_GPUTextureCreateInfo texture_create_info = {
     .type = SDL_GPU_TEXTURETYPE_2D,
     .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
     .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
-    .width = static_cast<Uint32>(image_data.surface->w),
-    .height = static_cast<Uint32>(image_data.surface->h),
+    .width = (uint32_t)w,
+    .height = (uint32_t)h,
     .layer_count_or_depth = 1,
     .num_levels = 1,
+    .sample_count = SDL_GPU_SAMPLECOUNT_1,
   };
 
-  auto* Texture = SDL_CreateGPUTexture(device, &texture_create_info);
-  if (!Texture) {
+  auto* texture = SDL_CreateGPUTexture(device, &texture_create_info);
+  if (!texture) {
     throw SDLException("Failed to CreateGPUTexture()");
     exit(SDL_APP_FAILURE); // crash
   }
-  SDL_SetGPUTextureName(device, Texture, path.c_str());
+  // SDL_SetGPUTextureName(device, texture, path.c_str());
 
   // Start texture transfer buffer
   const auto texture_transfer_buffer_create_info = SDL_GPUTransferBufferCreateInfo{
     .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-    .size = (Uint32)(image_data.surface->w * image_data.surface->h * 4),
+    .size = (Uint32)(w * h * 4),
   };
 
   // Map the buffer in to cpu memory
@@ -178,8 +190,8 @@ create_texture(SDL_GPUDevice* device, const std::string path)
     throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
 
   // Copy data in to transfer buffer
-  auto* texture_ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, texture_transfer_buffer, false);
-  SDL_memcpy(texture_ptr, image_data.surface->pixels, image_data.surface->w * image_data.surface->h * 4);
+  auto* texture_transfer_ptr = (Uint8*)SDL_MapGPUTransferBuffer(device, texture_transfer_buffer, false);
+  SDL_memcpy(texture_transfer_ptr, data, w * h * 4);
   SDL_UnmapGPUTransferBuffer(device, texture_transfer_buffer);
 
   SDL_GPUTextureTransferInfo transfer_info = {};
@@ -187,7 +199,7 @@ create_texture(SDL_GPUDevice* device, const std::string path)
   transfer_info.transfer_buffer = texture_transfer_buffer;
 
   SDL_GPUTextureRegion texture_region = {};
-  texture_region.texture = Texture;
+  texture_region.texture = texture;
   texture_region.x = (Uint32)0;
   texture_region.y = (Uint32)0;
   texture_region.w = (Uint32)texture_create_info.width;
@@ -199,20 +211,20 @@ create_texture(SDL_GPUDevice* device, const std::string path)
   auto* copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
   SDL_UploadToGPUTexture(copy_pass, &transfer_info, &texture_region, false);
   SDL_EndGPUCopyPass(copy_pass);
+
   if (!SDL_SubmitGPUCommandBuffer(upload_cmd_buf))
     throw SDLException("Unable to SDL_SubmitGPUCommandBuffer()");
 
   SDL_ReleaseGPUTransferBuffer(device, texture_transfer_buffer);
 
   TextureOut out;
-  out.texture = Texture;
-  out.w = image_data.surface->w;
-  out.h = image_data.surface->h;
+  out.texture = texture;
+  out.w = w;
+  out.h = h;
 
   // note: data is not copied.
   // must be freed in the order:
-  SDL_DestroySurface(image_data.surface);
-  stbi_image_free(image_data.data);
+  stbi_image_free(data);
 
   return out;
 };

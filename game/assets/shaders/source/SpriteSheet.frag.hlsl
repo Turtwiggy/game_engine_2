@@ -1,9 +1,6 @@
 Texture2D<float4> SpriteTexture : register(t0, space2);
 SamplerState SpriteSampler : register(s0, space2);
 
-Texture2D<float4> NormalTexture : register(t1, space2);
-SamplerState NormalSampler : register(s1, space2);
-
 struct Input
 {
     float2 TexCoord : TEXCOORD0;
@@ -19,7 +16,10 @@ float4 main(Input input) : SV_Target0
     // float py = 16;
     // desired sprite
 
-    float2 v_sprite_pos = float2(6,6);
+    // float2 v_sprite_pos = float2(16,1); // square
+    // float2 v_sprite_pos = float2(12,0); // circle
+    float2 v_sprite_pos = float2(6,6); // fish
+
     float2 v_sprite_wh = float2(2, 2);
     float2 v_sprite_max = float2(32, 32);
     float2 v_uv = input.TexCoord;
@@ -29,10 +29,7 @@ float4 main(Input input) : SV_Target0
         (v_sprite_wh.y * v_uv.y) / v_sprite_max.y + v_sprite_pos.y * (1.0f/v_sprite_max.y)
     );
     
+    // float4 sprite_col = SpriteTexture.Sample(SpriteSampler, v_uv);
     float4 sprite_col = input.Color * SpriteTexture.Sample(SpriteSampler, sprite_uv);
-    float4 normals = NormalTexture.Sample(NormalSampler, input.TexCoord);
-
-    // todo: apply lighting given normals.
-
-    return sprite_col + normals;
+    return sprite_col;
 }
