@@ -30,6 +30,16 @@ struct ColourComponent
   float a = 1.0f;
 };
 
+struct SpriteComponent
+{
+  float sprite_max_x = 0.0f;
+  float sprite_max_y = 0.0f;
+  float sprite_pos_x = 0.0f;
+  float sprite_pos_y = 0.0f;
+  float sprite_wh_x = 0.0f;
+  float sprite_wh_y = 0.0f;
+};
+
 //
 // game components
 //
@@ -50,6 +60,7 @@ struct Renderable
 {
   TransformComponent transform;
   ColourComponent colour;
+  SpriteComponent sprite;
 };
 
 struct InventoryComponent
@@ -73,6 +84,7 @@ struct CommonUiData
   // data to show in UI
   float game_dt = 0.0f;
   int n_controllers = 0;
+  vec3 camera_pos{ 0, 0 };
 
   vec2 keyboard_l{ 0, 0 };
   vec2 keyboard_r{ 0, 0 };
@@ -117,7 +129,6 @@ struct RenderData
 
   // data
   std::vector<Renderable> renderable;
-  vec2 camera_pos{ 0, 0 };
   CommonUiData ui_data;
 };
 
@@ -127,7 +138,6 @@ struct GameUIData
   ImGuiContext* ctx;
 
   std::vector<Renderable> renderable;
-  vec2 camera_pos{ 0, 0 };
   CommonUiData ui_data;
 };
 

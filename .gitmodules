@@ -16,3 +16,6 @@
 [submodule "thirdparty/shadercross"]
 	path = thirdparty/shadercross
 	url = https://github.com/libsdl-org/SDL_shadercross
+[submodule "thirdparty/assimp"]
+	path = thirdparty/assimp
+	url = https://github.com/assimp/assimp

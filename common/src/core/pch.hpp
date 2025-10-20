@@ -5,7 +5,15 @@
 #include <SDL3/SDL.h>
 #include <box2d/box2d.h>
 #include <entt/entt.hpp>
+#include <glm/ext/matrix_clip_space.hpp>
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/glm.hpp>
 #include <stb_image.h>
+
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 
 // clang-format off
 #define IMGUI_DEFINE_MATH_OPERATORS

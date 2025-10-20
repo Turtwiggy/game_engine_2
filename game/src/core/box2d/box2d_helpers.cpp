@@ -67,7 +67,7 @@ pixels_to_meters(float pixels)
 b2Vec2
 pixels_to_meters(vec2 pixels)
 {
-  auto p = pixels / vec2(PIXELS_PER_METER, PIXELS_PER_METER);
+  const auto p = pixels / vec2(PIXELS_PER_METER, PIXELS_PER_METER);
   return b2Vec2{ p.x, p.y };
 };
 

@@ -2,7 +2,7 @@
 
 // #include "box2d_parallel.hpp"
 #include "core/common.hpp"
-#include "core/maths/mat.hpp"
+#include "core/graphics.hpp"
 #include "imgui_helpers.hpp"
 #include "renderer/renderer_helpers.hpp"
 #include "sdl/sdl_exception.hpp"
@@ -10,6 +10,7 @@
 #include "sdl/sdl_setup.hpp"
 #include "sdl/sdl_shader.hpp"
 #include "threadsafe_queue.hpp"
+
 using namespace game2d;
 using namespace std::literals;
 
@@ -107,7 +108,6 @@ GameThread()
   // s->m_taskCount = 0;
 
   //  game init after physics init
-  // entt::registry r;
   game_code.game_init(&game_data);
 
   SDL_Log("(GameThread) -- done init");
@@ -181,16 +181,16 @@ GameThread()
 
       if (game_code.valid) {
         // copy transforms in to RenderData.
-        const auto view = game_data.r->view<const TransformComponent, const ColourComponent>();
-        view.each([&](entt::entity e, const auto& t_c, const auto& col_c) {
+        const auto view = game_data.r->view<const TransformComponent, const ColourComponent, const SpriteComponent>();
+        view.each([&](entt::entity e, const auto& t_c, const auto& col_c, const auto& sprite_c) {
           wb.renderable.push_back(Renderable{
             .transform = t_c,
             .colour = col_c,
+            .sprite = sprite_c,
           });
         });
 
         // copy anything else in to renderdata buffer.
-        wb.camera_pos = game_data.camera_pos;
         wb.ui_data = game_data.ui_data;
         wb.ui_data.game_dt = dt;
       }
@@ -203,54 +203,6 @@ GameThread()
   b2DestroyWorld(game_data.world_id);
 };
 
-// Vertex Formats
-
-/*
-
-typedef struct PositionVertex
-{
-  float x, y, z;
-} PositionVertex;
-
-typedef struct PositionColorVertex
-{
-  float x, y, z;
-  Uint8 r, g, b, a;
-} PositionColorVertex;
-
-typedef struct PositionTextureVertex
-{
-  float x, y, z;
-  float u, v;
-} PositionTextureVertex;
-
-typedef struct Index
-{
-  Uint16 i;
-} Index;
-
-// Rect
-const std::vector<PositionTextureVertex> vertex_data{
-  // clang-format off
-  // xyz, uv
-  // { -0.5, -0.5, 0,      0.0f, 1.0f },   //
-  // { 0.5, -0.5, 0,       1.0f, 1.0f },   //
-  // { 0.5, 0.5, 0,        1.0f, 1.0f },   //
-  // { -0.5, 0.5, 0,       0.0f, 1.0f },   //
-  {-0.5, 0.5, 0, 0, 0},
-  {0.5, 0.5, 0, 1, 0},
-  {0.5, -0.5, 0, 1, 1},
-  {-0.5, -0.5, 0, 0, 1} ,
-  // clang-format on
-};
-
-const std::vector<Index> index_data{
-  { 0 }, { 1 }, { 2 }, //
-  { 0 }, { 2 }, { 3 },
-};
-
-*/
-
 typedef struct SpriteInstance
 {
   float x, y, z;
@@ -258,6 +210,10 @@ typedef struct SpriteInstance
   float w, h, p1, p2;
   float tex_u, tex_v, tex_w, tex_h;
   float colour[4];
+  float sprite_max_x, sprite_max_y;
+  float sprite_pos_x, sprite_pos_y;
+  float sprite_wh_x, sprite_wh_y;
+  float p3, p4;
 } SpriteInstance;
 
 int
@@ -296,7 +252,7 @@ CreateErrorPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_pipeline(device, window, vert_input, frag_input);
+  return create_2d_pipeline(device, window, vert_input, frag_input);
 };
 
 SDL_GPUGraphicsPipeline*
@@ -316,7 +272,7 @@ CreateSpritePipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_pipeline(device, window, vert_input, frag_input);
+  return create_2d_pipeline(device, window, vert_input, frag_input);
 };
 SDL_GPUGraphicsPipeline*
 CreateSpriteNormalPipeline()
@@ -335,7 +291,7 @@ CreateSpriteNormalPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_pipeline(device, window, vert_input, frag_input);
+  return create_2d_pipeline(device, window, vert_input, frag_input);
 };
 SDL_GPUGraphicsPipeline*
 CreateLightingPipeline()
@@ -354,8 +310,27 @@ CreateLightingPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_pipeline(device, window, vert_input, frag_input);
-}
+  return create_2d_pipeline(device, window, vert_input, frag_input);
+};
+SDL_GPUGraphicsPipeline*
+CreateModelPipeline()
+{
+  const ShaderInput vert_input{
+    .shaderFilename = "TexturedQuadWithMatrix.vert",
+    .samplerCount = 0,
+    .uniformBufferCount = 1,
+    .storageBufferCount = 0,
+    .storageTextureCount = 0,
+  };
+  const ShaderInput frag_input{
+    .shaderFilename = "TexturedQuad.frag",
+    .samplerCount = 1,
+    .uniformBufferCount = 0,
+    .storageBufferCount = 0,
+    .storageTextureCount = 0,
+  };
+  return create_3d_pipeline(device, window, vert_input, frag_input);
+};
 
 SDL_GPUTransferBuffer*
 create_sprite_data_transfer_buffer(const int SPRITE_COUNT)
@@ -389,23 +364,158 @@ RenderThread()
   SDL_Log("%s", std::format("(RenderThread) SDL_IsMainThread(): {}", SDL_IsMainThread()).c_str());
 
   const uint32_t SPRITE_COUNT = 8192;
-  const Matrix4x4 camera_proj = Matrix4x4_CreateOrthographicOffCenter(0, (float)window_w, (float)window_h, 0, 0, -1);
 
   RendererInfo renderer_info;
   renderer_info.device = device;
   renderer_info.window = window;
   setup_renderer(renderer_info);
 
-  const auto custom_texture_out = create_texture(device, "custom.png"s);
-  const auto custom_texture_normal_out = create_texture(device, "custom_normal.png"s);
+  const auto viking_texture = create_and_upload_gpu_texture(device, "models/viking_room.png"s);
+  const auto custom_texture_out = create_and_upload_gpu_texture(device, "textures/custom.png"s);
+  const auto custom_texture_normal_out = create_and_upload_gpu_texture(device, "textures/custom_normal.png"s);
   auto* sprite_pipeline = CreateSpritePipeline();
   auto* normal_pipeline = CreateSpriteNormalPipeline();
   auto* lighting_pipeline = CreateLightingPipeline();
+  auto* model_pipeline = CreateModelPipeline();
   auto* error_pipeline = CreateErrorPipeline();
   auto* sprite_data_transfer_buffer = create_sprite_data_transfer_buffer(SPRITE_COUNT);
   auto* sprite_data_buffer = create_sprite_data_buffer(SPRITE_COUNT);
   auto* quad_data_transfer_buffer = create_sprite_data_transfer_buffer(1); // fullscreen quad
   auto* quad_data_buffer = create_sprite_data_buffer(1);
+
+  SDL_GPUBuffer* vertex_buffer;
+  SDL_GPUBuffer* index_buffer;
+  std::vector<VertexFinal> vertex_data;
+  std::vector<Index> index_data;
+
+  {
+    // vertex_data = {
+    // quad
+    // { -0.5f, -0.5f, 0.0f, /*uv*/ 0.0f, 0.0f }, //
+    // { 0.5f, -0.5f, 0.0f, /*uv*/ 1.0f, 0.0f },  //
+    // { 0.5f, 0.5f, 0.0f, /*uv*/ 1.0f, 1.0f },   //
+    // { -0.5f, 0.5f, 0.0f, /*uv*/ 0.0f, 1.0f },  //
+    // };
+    // index_data = {
+    // { 0 }, { 1 }, { 2 }, { 0 }, { 2 }, { 3 },
+    // };
+
+    // cube
+    // vertex_data = {
+    //   { -1.0f, -1.0f, 1.0f, 0.0f, 0.0f },  // 0 - front bottom left
+    //   { 1.0f, -1.0f, 1.0f, 1.0f, 0.0f },   // 1 - front bottom right
+    //   { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f },    // 2 - front top right
+    //   { -1.0f, 1.0f, 1.0f, 0.0f, 1.0f },   // 3 - front top left
+    //   { -1.0f, -1.0f, -1.0f, 1.0f, 0.0f }, // 4 - back bottom left
+    //   { 1.0f, -1.0f, -1.0f, 0.0f, 0.0f },  // 5 - back bottom right
+    //   { 1.0f, 1.0f, -1.0f, 0.0f, 1.0f },   // 6 - back top right
+    //   { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f }   // 7 - back top left
+    // };
+    // index_data = {
+    //   { 0 }, { 1 }, { 2 }, { 2 }, { 3 }, { 0 }, //
+    //   { 5 }, { 4 }, { 7 }, { 7 }, { 6 }, { 5 }, //
+    //   { 3 }, { 2 }, { 6 }, { 6 }, { 7 }, { 3 }, //
+    //   { 4 }, { 0 }, { 3 }, { 3 }, { 7 }, { 4 }, //
+    //   { 1 }, { 5 }, { 6 }, { 6 }, { 2 }, { 1 }, //
+    //   { 4 }, { 0 }, { 3 }, { 3 }, { 7 }, { 4 }  //
+    // };
+
+    // load a 3d model
+    SDL_Log("Loading model... (viking_room.obj)");
+    auto start = std::chrono::high_resolution_clock::now();
+    Assimp::Importer importer;
+    const auto* scene{ importer.ReadFile("assets/models/viking_room.obj", aiProcess_Triangulate) };
+    if (!scene)
+      throw std::runtime_error("Failed to load model: viking_room.obj"s);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    SDL_Log("Model loaded in %zu ms.", duration);
+
+    // process 3d model
+    {
+      for (int i = 0; i < scene->mNumMeshes; i++) {
+        const auto* mesh = scene->mMeshes[i];
+        for (int j = 0; j < mesh->mNumVertices; j++) {
+          const auto& vertex = mesh->mVertices[j];
+          const auto pos = vec3{ vertex.x, vertex.y, vertex.z };
+          const auto uv =
+            mesh->mTextureCoords[0] ? vec2{ mesh->mTextureCoords[0][j].x, mesh->mTextureCoords[0][j].y } : vec2{ 0, 0 };
+          vertex_data.push_back({ pos.x, pos.y, pos.z, uv.x, uv.y });
+        }
+        for (int j = 0; j < mesh->mNumFaces; j++) {
+          const auto& face = mesh->mFaces[j];
+          for (int k = 0; k < face.mNumIndices; k++)
+            index_data.push_back({ (Uint16)face.mIndices[k] });
+        }
+      }
+    }
+
+    const Uint32 vertex_data_mem_size = sizeof(VertexFinal) * vertex_data.size();
+    const Uint32 index_data_mem_size = sizeof(Index) * index_data.size();
+
+    // Create the vertex buffer
+    const auto vertex_buffer_info = SDL_GPUBufferCreateInfo{
+      .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
+      .size = vertex_data_mem_size,
+    };
+    vertex_buffer = SDL_CreateGPUBuffer(device, &vertex_buffer_info);
+    if (!vertex_buffer)
+      throw SDLException("Failed to create GpuBuffer");
+    SDL_SetGPUBufferName(device, vertex_buffer, "VertexBuffer");
+
+    // Create an index buffer
+    const auto index_buffer_info = SDL_GPUBufferCreateInfo{
+      .usage = SDL_GPU_BUFFERUSAGE_INDEX,
+      .size = index_data_mem_size,
+    };
+    index_buffer = SDL_CreateGPUBuffer(device, &index_buffer_info);
+    if (!index_buffer)
+      throw SDLException("Failed to create GpuBuffer");
+    SDL_SetGPUBufferName(device, index_buffer, "IndexBuffer");
+
+    // To get data in to the vertex buffer, we have to use a transfer buffer.
+    const auto transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
+      .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+      .size = vertex_data_mem_size + index_data_mem_size,
+    };
+
+    // Map the buffer in to cpu memory
+    auto* transfer_buffer = SDL_CreateGPUTransferBuffer(device, &transfer_buffer_info);
+    if (!transfer_buffer)
+      throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
+
+    // Copy the data in
+    auto* transfer_data = (Uint8*)SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
+    std::span vertex_buffer_data = { reinterpret_cast<VertexFinal*>(transfer_data), vertex_data.size() };
+    std::ranges::copy(vertex_data, vertex_buffer_data.begin());
+    std::span index_buffer_data = { reinterpret_cast<Index*>(transfer_data + vertex_data_mem_size), index_data.size() };
+    std::ranges::copy(index_data, index_buffer_data.begin());
+    SDL_UnmapGPUTransferBuffer(device, transfer_buffer); // note: need to unmap before aquire gpu command
+
+    // Upload the vertex_buffer and index_buffer
+    SDL_GPUCommandBuffer* upload_cmd_buf = SDL_AcquireGPUCommandBuffer(device);
+    if (upload_cmd_buf == nullptr)
+      throw SDLException("Could not aquire GPU command buffer");
+
+    SDL_GPUCopyPass* upload_copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
+    {
+      auto src = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
+      auto dst = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .size = vertex_buffer_info.size };
+      SDL_UploadToGPUBuffer(upload_copy_pass, &src, &dst, false);
+
+      src.offset = vertex_buffer_info.size;
+      dst.buffer = index_buffer;
+      dst.size = index_buffer_info.size;
+      SDL_UploadToGPUBuffer(upload_copy_pass, &src, &dst, false);
+    }
+    SDL_EndGPUCopyPass(upload_copy_pass);
+
+    const auto submit = SDL_SubmitGPUCommandBuffer(upload_cmd_buf);
+    if (!submit)
+      throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
+
+    SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
+  }
 
   const auto create_render_texture = []() -> SDL_GPUTexture* {
     // The contents of this texture are undefined until data is written to the texture,
@@ -428,6 +538,8 @@ RenderThread()
   };
   auto* gpu_texture_a = create_render_texture();
   auto* gpu_texture_b = create_render_texture();
+  auto* gpu_texture_c = create_render_texture();
+  auto* depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h);
 
   SDL_Log("(RenderThread) -- done init");
   // SignalRenderThread(); // done init()
@@ -452,10 +564,8 @@ RenderThread()
 
       game_ui_data.renderable = read_buffer.renderable; // take a copy
       game_ui_data.ui_data = read_buffer.ui_data;
-      game_ui_data.camera_pos = read_buffer.camera_pos;
     }
     const auto& renderables = game_ui_data.renderable;
-    const Matrix4x4 camera_view = Matrix4x4_CreateView(game_ui_data.camera_pos);
 
     //
     // grab all the events
@@ -483,15 +593,29 @@ RenderThread()
 
             auto result = RecompileShaders();
             if (result != 0) {
+              model_pipeline = CreateErrorPipeline();
               sprite_pipeline = CreateErrorPipeline();
               normal_pipeline = CreateErrorPipeline();
               lighting_pipeline = CreateErrorPipeline();
             } else if (result == 0) {
+              model_pipeline = CreateModelPipeline();
               sprite_pipeline = CreateSpritePipeline();
               normal_pipeline = CreateSpriteNormalPipeline();
               lighting_pipeline = CreateLightingPipeline();
             }
           }
+        }
+        if (evt.type == SDL_EVENT_WINDOW_RESIZED) {
+          SDL_Log("recreate render/depth textures");
+          SDL_ReleaseGPUTexture(device, gpu_texture_a);
+          SDL_ReleaseGPUTexture(device, gpu_texture_b);
+          SDL_ReleaseGPUTexture(device, gpu_texture_c);
+          SDL_ReleaseGPUTexture(device, depth_texture);
+          SDL_GetWindowSize(window, &window_w, &window_h);
+          depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h);
+          gpu_texture_a = create_render_texture();
+          gpu_texture_b = create_render_texture();
+          gpu_texture_c = create_render_texture();
         }
       }
     }
@@ -505,18 +629,26 @@ RenderThread()
     ImGui::NewFrame();
     ImGui::ShowDemoWindow(NULL);
 
-    ImGui::Begin("GpuTextureA");
     {
-      const auto wh = ImGui::GetContentRegionAvail();
-      ImGui::Image((ImTextureID)(intptr_t)gpu_texture_a, wh);
+      ImGui::Begin("GpuTextureA");
+      {
+        const auto wh = ImGui::GetContentRegionAvail();
+        ImGui::Image((ImTextureID)(intptr_t)gpu_texture_a, wh);
+      }
+      ImGui::End();
+      ImGui::Begin("GpuTextureB");
+      {
+        const auto wh = ImGui::GetContentRegionAvail();
+        ImGui::Image((ImTextureID)(intptr_t)gpu_texture_b, wh);
+      }
+      ImGui::End();
+      ImGui::Begin("GpuTextureC");
+      {
+        const auto wh = ImGui::GetContentRegionAvail();
+        ImGui::Image((ImTextureID)(intptr_t)gpu_texture_c, wh);
+      }
+      ImGui::End();
     }
-    ImGui::End();
-    ImGui::Begin("GpuTextureB");
-    {
-      const auto wh = ImGui::GetContentRegionAvail();
-      ImGui::Image((ImTextureID)(intptr_t)gpu_texture_b, wh);
-    }
-    ImGui::End();
 
     // Update game ui
     {
@@ -531,7 +663,25 @@ RenderThread()
       ImGui::Render();
       ImDrawData* draw_data = ImGui::GetDrawData();
       const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
-      const auto view_projection = camera_view * camera_proj;
+
+      const float dt = (float)(1e-9 * (float)dt_ns);
+      constexpr float M_PI = 3.141592653589;
+      const float aspect_ratio = (float)window_w / (float)window_h;
+      const auto cam_pos = vec3{ game_ui_data.ui_data.camera_pos.x, game_ui_data.ui_data.camera_pos.y, 0 };
+      const auto view_matrix = glm::lookAt(glm::vec3{ 0, 0, 2.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
+      const auto proj_persp_matrix = glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 100.0f);
+      const auto proj_ortho_matrix = glm::ortho(0.0f, (float)window_w, (float)window_h, 0.0f);
+      auto vp_matrix = proj_ortho_matrix * view_matrix;
+
+      auto model_matrix = glm::mat4(1.0f);
+
+      static float t = 0.0f;
+      t += game_ui_data.ui_data.game_dt;
+      model_matrix = glm::rotate(model_matrix, glm::radians(t) * 100.0f, { 1.0f, 1.0f, 1.0f });
+
+      // model_matrix = Matrix4x4_Rotate(model_matrix, radians(t) * 0.01f, vec3{ 0.0f, 1.0f, 0.0f });
+      // const auto mvp_matrix = camera_proj * v_matrix * model_matrix;
+      auto mvp_matrix = proj_persp_matrix * view_matrix * model_matrix;
 
       // "One can encode multiple render passes
       // (or alternate between render and compute passes) in a single command buffer.
@@ -580,7 +730,18 @@ RenderThread()
             data_ptr[i].colour[1] = colour.g;
             data_ptr[i].colour[2] = colour.b;
             data_ptr[i].colour[3] = colour.a;
+
+            auto& sprite_c = renderables[i].sprite;
+            data_ptr[i].sprite_max_x = sprite_c.sprite_max_x;
+            data_ptr[i].sprite_max_y = sprite_c.sprite_max_y;
+            data_ptr[i].sprite_pos_x = sprite_c.sprite_pos_x;
+            data_ptr[i].sprite_pos_y = sprite_c.sprite_pos_y;
+            data_ptr[i].sprite_wh_x = sprite_c.sprite_wh_x;
+            data_ptr[i].sprite_wh_y = sprite_c.sprite_wh_y;
           }
+
+          data_ptr[i].p3 = 0.0f;
+          data_ptr[i].p4 = 0.0f;
         }
         SDL_UnmapGPUTransferBuffer(device, sprite_data_transfer_buffer);
 
@@ -621,6 +782,14 @@ RenderThread()
         data_ptr[0].colour[1] = 0.0f;
         data_ptr[0].colour[2] = 0.0f;
         data_ptr[0].colour[3] = 1.0f;
+        data_ptr[0].sprite_max_x = 0;
+        data_ptr[0].sprite_max_y = 0;
+        data_ptr[0].sprite_pos_x = 0;
+        data_ptr[0].sprite_pos_y = 0;
+        data_ptr[0].sprite_wh_x = 0;
+        data_ptr[0].sprite_wh_y = 0;
+        data_ptr[0].p3 = 0.0f;
+        data_ptr[0].p4 = 0.0f;
         SDL_UnmapGPUTransferBuffer(device, quad_data_transfer_buffer);
 
         // Upload instance data.
@@ -655,7 +824,7 @@ RenderThread()
         {
           SDL_BindGPUGraphicsPipeline(render_pass, sprite_pipeline);
           SDL_BindGPUVertexStorageBuffers(render_pass, 0, &sprite_data_buffer, 1);
-          SDL_PushGPUVertexUniformData(cmd_buf, 0, &view_projection, sizeof(Matrix4x4));
+          SDL_PushGPUVertexUniformData(cmd_buf, 0, &vp_matrix, sizeof(glm::mat4));
 
           const auto fragment_samplers = std::vector<SDL_GPUTextureSamplerBinding>{
             { .texture = custom_texture_out.texture, .sampler = renderer_info.samplers[0] },
@@ -682,7 +851,7 @@ RenderThread()
         {
           SDL_BindGPUGraphicsPipeline(render_pass, normal_pipeline);
           SDL_BindGPUVertexStorageBuffers(render_pass, 0, &sprite_data_buffer, 1);
-          SDL_PushGPUVertexUniformData(cmd_buf, 0, &view_projection, sizeof(Matrix4x4));
+          SDL_PushGPUVertexUniformData(cmd_buf, 0, &vp_matrix, sizeof(glm::mat4));
 
           const auto fragment_samplers = std::vector<SDL_GPUTextureSamplerBinding>{
             { .texture = custom_texture_normal_out.texture, .sampler = renderer_info.samplers[0] },
@@ -690,6 +859,43 @@ RenderThread()
           SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers.data(), (uint32_t)fragment_samplers.size());
 
           SDL_DrawGPUPrimitives(render_pass, SPRITE_COUNT * 6, 1, 0, 0);
+        }
+        SDL_EndGPURenderPass(render_pass);
+      }
+
+      // render the viking model
+      {
+        const SDL_GPUDepthStencilTargetInfo depth_info_c = {
+          .texture = depth_texture,
+          .clear_depth = 1.0f,
+          .load_op = SDL_GPU_LOADOP_CLEAR,
+        };
+        const SDL_GPUColorTargetInfo col_info_c = {
+          .texture = gpu_texture_c,
+          .mip_level = 0,
+          .layer_or_depth_plane = 0,
+          .clear_color = SDL_FColor{ 0.3f, 0.3f, 0.3f, 1.0f },
+          .load_op = SDL_GPU_LOADOP_CLEAR,
+          .store_op = SDL_GPU_STOREOP_STORE,
+          .cycle = false,
+        };
+        SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, &col_info_c, 1, &depth_info_c);
+        {
+          SDL_BindGPUGraphicsPipeline(render_pass, model_pipeline);
+
+          SDL_GPUBufferBinding vertex_binding{ vertex_buffer, 0 };
+          SDL_BindGPUVertexBuffers(render_pass, 0, &vertex_binding, 1);
+          SDL_PushGPUVertexUniformData(cmd_buf, 0, &mvp_matrix, sizeof(glm::mat4));
+
+          const auto fragment_samplers = std::vector<SDL_GPUTextureSamplerBinding>{
+            { .texture = viking_texture.texture, .sampler = renderer_info.samplers[0] },
+          };
+          SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers.data(), (uint32_t)fragment_samplers.size());
+
+          // by 2h44 this should be working
+          SDL_GPUBufferBinding index_binding{ index_buffer, 0 };
+          SDL_BindGPUIndexBuffer(render_pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+          SDL_DrawGPUIndexedPrimitives(render_pass, (Uint32)index_data.size(), 1, 0, 0, 0);
         }
         SDL_EndGPURenderPass(render_pass);
       }
@@ -706,14 +912,14 @@ RenderThread()
         // Render the final output to the swapchain_texture
         //
         {
-          SDL_PushGPUVertexUniformData(cmd_buf, 0, &view_projection, sizeof(Matrix4x4));
+          SDL_PushGPUVertexUniformData(cmd_buf, 0, &vp_matrix, sizeof(glm::mat4));
           SDL_PushGPUFragmentUniformData(cmd_buf, 0, &mouse_pos, sizeof(mouse_pos));
 
           const SDL_GPUColorTargetInfo col_info = {
             .texture = swapchain_texture,
             .mip_level = 0,
             .layer_or_depth_plane = 0,
-            .clear_color = SDL_FColor{ 0.3f, 0.4f, 0.5f, 1.0f },
+            .clear_color = SDL_FColor{ 1.0f, 0.0f, 0.0f, 1.0f },
             .load_op = SDL_GPU_LOADOP_CLEAR,
             .store_op = SDL_GPU_STOREOP_STORE,
             .cycle = false,
@@ -762,9 +968,13 @@ RenderThread()
   SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
   SDL_ReleaseGPUTexture(device, gpu_texture_a);
   SDL_ReleaseGPUTexture(device, gpu_texture_b);
+  SDL_ReleaseGPUTexture(device, gpu_texture_c);
+  SDL_ReleaseGPUTexture(device, depth_texture);
   SDL_ReleaseGPUTexture(device, custom_texture_out.texture);
   SDL_ReleaseGPUTexture(device, custom_texture_normal_out.texture);
+  SDL_ReleaseGPUTexture(device, viking_texture.texture);
   SDL_ReleaseGPUTransferBuffer(device, sprite_data_transfer_buffer);
+  SDL_ReleaseGPUTransferBuffer(device, quad_data_transfer_buffer);
   SDL_ReleaseGPUBuffer(device, sprite_data_buffer);
 };
 
@@ -863,8 +1073,10 @@ main(int argc, char* argv[])
 
         if (evt.type == SDL_EVENT_KEY_DOWN) {
           const auto scancode = evt.key.scancode;
-          if (scancode == SDL_SCANCODE_9)
+          if (scancode == SDL_SCANCODE_9) {
+            SDL_Log("(KEY: 9) Rebuild dll...");
             rebuild_dll = true;
+          }
           if (scancode == SDL_SCANCODE_ESCAPE)
             running = false;
         }

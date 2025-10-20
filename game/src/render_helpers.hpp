@@ -5,9 +5,6 @@
 
 namespace game2d {
 
-std::vector<b2ShapeId>
-get_shapes(b2BodyId id);
-
 void
 update_transforms_from_physics(entt::registry& r);
 

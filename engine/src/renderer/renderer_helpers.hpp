@@ -18,20 +18,22 @@ struct RendererInfo
 void
 setup_renderer(RendererInfo& ri);
 
-struct TextureOut
+struct TextureOutB
 {
   int w = 0;
   int h = 0;
   SDL_GPUTexture* texture = nullptr;
 };
+TextureOutB
+create_and_upload_gpu_texture(SDL_GPUDevice* device, const std::string path);
 
-/*
-  https://github.com/ocornut/imgui/wiki/Image-Loading-and-Displaying-Examples#example-for-sdl_gpu-users
-*/
-TextureOut
-create_texture(SDL_GPUDevice* device, const std::string path);
+SDL_GPUTexture*
+create_depth_texture(SDL_GPUDevice* device, int w, int h);
 
 SDL_GPUGraphicsPipeline*
-create_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag);
+create_2d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag);
+
+SDL_GPUGraphicsPipeline*
+create_3d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag);
 
 } // namespace game2d
