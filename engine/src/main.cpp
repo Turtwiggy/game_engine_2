@@ -313,7 +313,7 @@ CreateLightingPipeline()
   return create_2d_pipeline(device, window, vert_input, frag_input);
 };
 SDL_GPUGraphicsPipeline*
-CreateModelPipeline()
+CreateModelPipeline(const SDL_GPUSampleCount sample_count)
 {
   const ShaderInput vert_input{
     .shaderFilename = "TexturedQuadWithMatrix.vert",
@@ -329,7 +329,7 @@ CreateModelPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_3d_pipeline(device, window, vert_input, frag_input);
+  return create_3d_pipeline(device, window, vert_input, frag_input, sample_count);
 };
 
 SDL_GPUTransferBuffer*
@@ -370,13 +370,14 @@ RenderThread()
   renderer_info.window = window;
   setup_renderer(renderer_info);
 
+  auto msaa = SDL_GPU_SAMPLECOUNT_2;
   const auto viking_texture = create_and_upload_gpu_texture(device, "models/viking_room.png"s);
   const auto custom_texture_out = create_and_upload_gpu_texture(device, "textures/custom.png"s);
   const auto custom_texture_normal_out = create_and_upload_gpu_texture(device, "textures/custom_normal.png"s);
   auto* sprite_pipeline = CreateSpritePipeline();
   auto* normal_pipeline = CreateSpriteNormalPipeline();
   auto* lighting_pipeline = CreateLightingPipeline();
-  auto* model_pipeline = CreateModelPipeline();
+  auto* model_pipeline = CreateModelPipeline(msaa);
   auto* error_pipeline = CreateErrorPipeline();
   auto* sprite_data_transfer_buffer = create_sprite_data_transfer_buffer(SPRITE_COUNT);
   auto* sprite_data_buffer = create_sprite_data_buffer(SPRITE_COUNT);
@@ -539,7 +540,32 @@ RenderThread()
   auto* gpu_texture_a = create_render_texture();
   auto* gpu_texture_b = create_render_texture();
   auto* gpu_texture_c = create_render_texture();
-  auto* depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h);
+
+  auto create_msaa_texture = [](auto in_msaa) -> SDL_GPUTexture* {
+    // The contents of this texture are undefined until data is written to the texture,
+    // either via SDL_UploadToGpuTexture, or by performaing a render or compute pass with
+    // this texture as a target.
+    SDL_GPUTextureCreateInfo gpu_texture_info = {
+      .type = SDL_GPU_TEXTURETYPE_2D,
+      .format = SDL_GetGPUSwapchainTextureFormat(device, window),
+      .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+      .width = (Uint32)2.0f * window_w,
+      .height = (Uint32)2.0f * window_h,
+      .layer_count_or_depth = 1,
+      .num_levels = 1,
+      .sample_count = in_msaa,
+    };
+
+    if (in_msaa == SDL_GPU_SAMPLECOUNT_1)
+      gpu_texture_info.usage |= SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+    SDL_GPUTexture* gpu_texture = SDL_CreateGPUTexture(device, &gpu_texture_info);
+    if (gpu_texture == nullptr)
+      throw SDLException("Unable to SDL_CreateGPUTexture()");
+    return gpu_texture;
+  };
+  auto* msaa_texture = create_msaa_texture(msaa);
+  auto* msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
 
   SDL_Log("(RenderThread) -- done init");
   // SignalRenderThread(); // done init()
@@ -587,6 +613,7 @@ RenderThread()
             SDL_Log("(RenderThread) wants to rebuild shaders...");
 
             // releasing and recreate the fill pipeline (which uses the updated shaders)
+            SDL_ReleaseGPUGraphicsPipeline(device, model_pipeline);
             SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
             SDL_ReleaseGPUGraphicsPipeline(device, normal_pipeline);
             SDL_ReleaseGPUGraphicsPipeline(device, lighting_pipeline);
@@ -598,7 +625,7 @@ RenderThread()
               normal_pipeline = CreateErrorPipeline();
               lighting_pipeline = CreateErrorPipeline();
             } else if (result == 0) {
-              model_pipeline = CreateModelPipeline();
+              model_pipeline = CreateModelPipeline(msaa);
               sprite_pipeline = CreateSpritePipeline();
               normal_pipeline = CreateSpriteNormalPipeline();
               lighting_pipeline = CreateLightingPipeline();
@@ -606,16 +633,16 @@ RenderThread()
           }
         }
         if (evt.type == SDL_EVENT_WINDOW_RESIZED) {
-          SDL_Log("recreate render/depth textures");
-          SDL_ReleaseGPUTexture(device, gpu_texture_a);
-          SDL_ReleaseGPUTexture(device, gpu_texture_b);
-          SDL_ReleaseGPUTexture(device, gpu_texture_c);
-          SDL_ReleaseGPUTexture(device, depth_texture);
-          SDL_GetWindowSize(window, &window_w, &window_h);
-          depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h);
-          gpu_texture_a = create_render_texture();
-          gpu_texture_b = create_render_texture();
-          gpu_texture_c = create_render_texture();
+          SDL_Log("TODO: recreate render/depth textures");
+          // SDL_ReleaseGPUTexture(device, gpu_texture_a);
+          // SDL_ReleaseGPUTexture(device, gpu_texture_b);
+          // SDL_ReleaseGPUTexture(device, gpu_texture_c);
+          // SDL_ReleaseGPUTexture(device, msaa_depth_texture);
+          // SDL_GetWindowSize(window, &window_w, &window_h);
+          // msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
+          // gpu_texture_a = create_render_texture();
+          // gpu_texture_b = create_render_texture();
+          // gpu_texture_c = create_render_texture();
         }
       }
     }
@@ -630,6 +657,34 @@ RenderThread()
     ImGui::ShowDemoWindow(NULL);
 
     {
+      ImGui::Begin("Debug");
+
+      static int msaa_factor = 8;
+      ImGui::InputInt("msaa", &msaa_factor);
+      if (ImGui::Button("Refresh Msaa")) {
+
+        if (msaa_factor == 1)
+          msaa = SDL_GPU_SAMPLECOUNT_1;
+        if (msaa_factor == 2)
+          msaa = SDL_GPU_SAMPLECOUNT_2;
+        if (msaa_factor == 4)
+          msaa = SDL_GPU_SAMPLECOUNT_4;
+        if (msaa_factor == 8)
+          msaa = SDL_GPU_SAMPLECOUNT_8;
+
+        // recreate textures
+        SDL_ReleaseGPUTexture(device, msaa_texture);
+        SDL_ReleaseGPUTexture(device, msaa_depth_texture);
+        msaa_texture = create_msaa_texture(msaa);
+        msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
+
+        // recreate pipeline.
+        SDL_ReleaseGPUGraphicsPipeline(device, model_pipeline);
+        model_pipeline = CreateModelPipeline(msaa);
+      }
+
+      ImGui::End();
+
       ImGui::Begin("GpuTextureA");
       {
         const auto wh = ImGui::GetContentRegionAvail();
@@ -676,8 +731,8 @@ RenderThread()
       auto model_matrix = glm::mat4(1.0f);
 
       static float t = 0.0f;
-      t += game_ui_data.ui_data.game_dt;
-      model_matrix = glm::rotate(model_matrix, glm::radians(t) * 100.0f, { 1.0f, 1.0f, 1.0f });
+      t += dt;
+      model_matrix = glm::rotate(model_matrix, glm::radians(t) * 10.0f, { 1.0f, 1.0f, 1.0f });
 
       // model_matrix = Matrix4x4_Rotate(model_matrix, radians(t) * 0.01f, vec3{ 0.0f, 1.0f, 0.0f });
       // const auto mvp_matrix = camera_proj * v_matrix * model_matrix;
@@ -865,20 +920,30 @@ RenderThread()
 
       // render the viking model
       {
+
         const SDL_GPUDepthStencilTargetInfo depth_info_c = {
-          .texture = depth_texture,
+          .texture = msaa_depth_texture,
           .clear_depth = 1.0f,
           .load_op = SDL_GPU_LOADOP_CLEAR,
         };
-        const SDL_GPUColorTargetInfo col_info_c = {
-          .texture = gpu_texture_c,
+
+        SDL_GPUColorTargetInfo col_info_c{
           .mip_level = 0,
           .layer_or_depth_plane = 0,
           .clear_color = SDL_FColor{ 0.3f, 0.3f, 0.3f, 1.0f },
           .load_op = SDL_GPU_LOADOP_CLEAR,
-          .store_op = SDL_GPU_STOREOP_STORE,
           .cycle = false,
         };
+
+        if (msaa != SDL_GPU_SAMPLECOUNT_1) {
+          col_info_c.texture = msaa_texture;
+          col_info_c.resolve_texture = gpu_texture_c; // resolve_texture must have sample_count of 1
+          col_info_c.store_op = SDL_GPU_STOREOP_RESOLVE;
+        } else {
+          col_info_c.texture = gpu_texture_c;
+          col_info_c.store_op = SDL_GPU_STOREOP_STORE;
+        }
+
         SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, &col_info_c, 1, &depth_info_c);
         {
           SDL_BindGPUGraphicsPipeline(render_pass, model_pipeline);
@@ -969,7 +1034,8 @@ RenderThread()
   SDL_ReleaseGPUTexture(device, gpu_texture_a);
   SDL_ReleaseGPUTexture(device, gpu_texture_b);
   SDL_ReleaseGPUTexture(device, gpu_texture_c);
-  SDL_ReleaseGPUTexture(device, depth_texture);
+  SDL_ReleaseGPUTexture(device, msaa_texture);
+  SDL_ReleaseGPUTexture(device, msaa_depth_texture);
   SDL_ReleaseGPUTexture(device, custom_texture_out.texture);
   SDL_ReleaseGPUTexture(device, custom_texture_normal_out.texture);
   SDL_ReleaseGPUTexture(device, viking_texture.texture);

@@ -152,7 +152,7 @@ get_depth_stencil_format(SDL_GPUDevice* device)
 }
 
 SDL_GPUTexture*
-create_depth_texture(SDL_GPUDevice* device, int w, int h)
+create_depth_texture(SDL_GPUDevice* device, int w, int h, const SDL_GPUSampleCount sample_count)
 {
   SDL_GPUTextureCreateInfo texture_create_info = {
     .type = SDL_GPU_TEXTURETYPE_2D,
@@ -162,6 +162,7 @@ create_depth_texture(SDL_GPUDevice* device, int w, int h)
     .height = (uint32_t)h,
     .layer_count_or_depth = 1,
     .num_levels = 1,
+    .sample_count = sample_count,
   };
 
   auto* texture = SDL_CreateGPUTexture(device, &texture_create_info);
@@ -241,7 +242,11 @@ create_and_upload_gpu_texture(SDL_GPUDevice* device, const std::string path)
 };
 
 SDL_GPUGraphicsPipeline*
-create_3d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag)
+create_3d_pipeline(SDL_GPUDevice* device,
+                   SDL_Window* window,
+                   const ShaderInput& vert,
+                   const ShaderInput& frag,
+                   const SDL_GPUSampleCount sample_count)
 {
   SDL_GPUShader* vert_shader = nullptr;
   SDL_GPUShader* frag_shader = nullptr;
@@ -289,6 +294,13 @@ create_3d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput&
     { .location = 1, .buffer_slot = 0, .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = offsetof(VertexFinal, u) },
   };
 
+  const auto format = SDL_GetGPUSwapchainTextureFormat(device, window);
+  if (!SDL_GPUTextureSupportsSampleCount(device, format, sample_count)) {
+    SDL_Log("Sample count %d not supported", (1 << sample_count));
+    exit(SDL_APP_FAILURE); // explode
+  }
+  SDL_Log("Creating 3d model pipeline with msaa: %d", (1 << sample_count));
+
   // Create the pipelines.
   SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
     .vertex_shader = vert_shader,
@@ -300,6 +312,9 @@ create_3d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput&
     	.num_vertex_attributes = (Uint32)vertex_attributes.size(),
     },
     .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+    .multisample_state = {
+      .sample_count = sample_count,
+    },
     .depth_stencil_state = {
         .compare_op = SDL_GPU_COMPAREOP_LESS,
         .enable_depth_test = true,
