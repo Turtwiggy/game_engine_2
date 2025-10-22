@@ -1,6 +1,6 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
-#include "core/maths/vec.hpp"
+#include "modules/maths/vec.hpp"
 
 namespace game2d {
 

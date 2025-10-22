@@ -1,9 +1,8 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
-#include "core/graphics.hpp"
+#include "modules/sdl/sdl_exception.hpp"
+#include "modules/sdl/sdl_shader.hpp"
 #include "renderer_helpers.hpp"
-#include "sdl/sdl_exception.hpp"
-#include "sdl/sdl_shader.hpp"
 
 namespace game2d {
 
@@ -240,107 +239,6 @@ create_and_upload_gpu_texture(SDL_GPUDevice* device, const std::string path)
 
   return { .w = texture.w, .h = texture.h, .texture = texture.texture };
 };
-
-SDL_GPUGraphicsPipeline*
-create_3d_pipeline(SDL_GPUDevice* device,
-                   SDL_Window* window,
-                   const ShaderInput& vert,
-                   const ShaderInput& frag,
-                   const SDL_GPUSampleCount sample_count)
-{
-  SDL_GPUShader* vert_shader = nullptr;
-  SDL_GPUShader* frag_shader = nullptr;
-
-  vert_shader = game2d::LoadShader(device, vert);
-  if (vert_shader == NULL) {
-    SDL_Log("Failed to create vert shader");
-    exit(SDL_APP_FAILURE); // explode
-  };
-
-  frag_shader = game2d::LoadShader(device, frag);
-  if (frag_shader == NULL) {
-    SDL_Log("Failed to create frag shader");
-    exit(SDL_APP_FAILURE); // explode
-  };
-
-  const std::vector<SDL_GPUColorTargetDescription> color_target_desc{ {
-    .format = SDL_GetGPUSwapchainTextureFormat(device, window),
-    //  .blend_state =
-    //      {
-    //          .src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-    //          .dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-    //          .color_blend_op = SDL_GPU_BLENDOP_ADD,
-    //          .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-    //          .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-    //          .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
-    //          .enable_blend = true,
-    //      }},
-  } };
-
-  const std::vector<SDL_GPUVertexBufferDescription> vertex_buffer_descriptions{
-    {
-      .slot = 0,
-      .pitch = sizeof(VertexFinal),
-      .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
-      .instance_step_rate = 0,
-    },
-  };
-
-  // Setup to match the vertex shader layout
-  // xyz is 3 floats
-  // uv is a 2 floats
-  const std::vector<SDL_GPUVertexAttribute> vertex_attributes{
-    { .location = 0, .buffer_slot = 0, .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = 0 },
-    { .location = 1, .buffer_slot = 0, .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = offsetof(VertexFinal, u) },
-  };
-
-  const auto format = SDL_GetGPUSwapchainTextureFormat(device, window);
-  if (!SDL_GPUTextureSupportsSampleCount(device, format, sample_count)) {
-    SDL_Log("Sample count %d not supported", (1 << sample_count));
-    exit(SDL_APP_FAILURE); // explode
-  }
-  SDL_Log("Creating 3d model pipeline with msaa: %d", (1 << sample_count));
-
-  // Create the pipelines.
-  SDL_GPUGraphicsPipelineCreateInfo pipeline_info = {
-    .vertex_shader = vert_shader,
-    .fragment_shader = frag_shader,
-    .vertex_input_state = SDL_GPUVertexInputState{
-      .vertex_buffer_descriptions = vertex_buffer_descriptions.data(),
-      .num_vertex_buffers = (Uint32)vertex_buffer_descriptions.size(),
-      .vertex_attributes = vertex_attributes.data(),
-    	.num_vertex_attributes = (Uint32)vertex_attributes.size(),
-    },
-    .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
-    .multisample_state = {
-      .sample_count = sample_count,
-    },
-    .depth_stencil_state = {
-        .compare_op = SDL_GPU_COMPAREOP_LESS,
-        .enable_depth_test = true,
-        .enable_depth_write = true,
-    },
-    .target_info = { .color_target_descriptions = color_target_desc.data(),
-                     .num_color_targets = (Uint32)color_target_desc.size(),
-                     .depth_stencil_format = get_depth_stencil_format(device) ,
-                     .has_depth_stencil_target = true,
-                    },
-  };
-
-  // pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-  SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(device, &pipeline_info);
-  if (pipeline == nullptr) {
-    throw SDLException("Failed to create Fill GraphicsPipeline()");
-    exit(SDL_APP_FAILURE); // crash
-  }
-
-  // can release shaders after creating pipelines
-  SDL_Log("Releasing shaders... be free!");
-  SDL_ReleaseGPUShader(device, vert_shader);
-  SDL_ReleaseGPUShader(device, frag_shader);
-
-  return pipeline;
-}
 
 SDL_GPUGraphicsPipeline*
 create_2d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag)

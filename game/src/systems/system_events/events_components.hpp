@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/singleton.hpp"
+#include "singleton.hpp"
 
 #include <entt/fwd.hpp>
 #include <entt/signal/dispatcher.hpp>

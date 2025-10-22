@@ -1,8 +1,8 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
 #include "sdl_setup.hpp"
 
-#include "sdl/sdl_exception.hpp"
+#include "modules/sdl/sdl_exception.hpp"
 
 namespace game2d {
 

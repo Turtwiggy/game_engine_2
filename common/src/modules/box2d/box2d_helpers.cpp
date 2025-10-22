@@ -1,8 +1,8 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
-#include "core/box2d/box2d_helpers.hpp"
+#include "modules/box2d/box2d_helpers.hpp"
 
-#include "core/box2d/box2d_components.hpp"
+#include "modules/box2d/box2d_components.hpp"
 
 namespace game2d {
 

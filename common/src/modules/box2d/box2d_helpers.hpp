@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/common.hpp"
+#include "modules/maths/vec.hpp"
 
 #include <box2d/box2d.h>
 #include <entt/fwd.hpp>

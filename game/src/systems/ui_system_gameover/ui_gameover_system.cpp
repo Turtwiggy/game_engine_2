@@ -1,4 +1,4 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
 #include "ui_gameover_components.hpp"
 

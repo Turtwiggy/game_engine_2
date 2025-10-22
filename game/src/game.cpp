@@ -1,20 +1,23 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
 #include "game.hpp"
 
 #include "actors/actor_player/actor_player_components.hpp"
-#include "core/box2d/box2d_components.hpp"
-#include "core/box2d/box2d_helpers.hpp"
-#include "core/camera/camera_helpers.hpp"
-#include "core/common.hpp"
-#include "core/entt/entt_helpers.hpp"
-#include "core/input/input_helpers.hpp"
-#include "core/maths/helpers.hpp"
+#include "game_and_engine_interop.hpp"
+#include "modules/box2d/box2d_components.hpp"
+#include "modules/box2d/box2d_helpers.hpp"
+#include "modules/camera/camera_helpers.hpp"
+#include "modules/camera/perspective_helpers.hpp"
+#include "modules/entt/entt_helpers.hpp"
+#include "modules/input/input_helpers.hpp"
+#include "modules/maths/helpers.hpp"
 #include "render_helpers.hpp"
 #include "systems/system_events/events_components.hpp"
 #include "systems/system_items/items_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_system.hpp"
+#include <SDL3/SDL_events.h>
+#include <SDL3/SDL_mouse.h>
 
 namespace game2d {
 
@@ -22,15 +25,17 @@ static entt::registry internal_r;
 static bool refreshed = false;
 const auto screen_size = vec2(1280, 720); // todo: fix this
 
+static bool capture_mouse = false;
+static float camera_speed = 10.0f;
+static float mouse_sens = 0.01f;
+
 static float stuff_size = 32.0f;
-static float camera_speed = 100;
-static vec2 camera_pos{ 0, 0 };
-static vec2 keyboard_l{ 0, 0 };
-static vec2 keyboard_r{ 0, 0 };
+// static vec2 keyboard_l{ 0, 0 };
+// static vec2 keyboard_r{ 0, 0 };
 static vec2 controller_l{ 0, 0 };
 static vec2 controller_r{ 0, 0 };
-static vec2 l_input{ 0, 0 };
-static vec2 r_input{ 0, 0 };
+// static vec2 l_input{ 0, 0 };
+// static vec2 r_input{ 0, 0 };
 static bool jump = false;
 static bool pickup = false;
 const auto jump_force = b2Vec2{ 0.0f, -5.0f };
@@ -85,8 +90,10 @@ spawn(GameData* data,
   b2ShapeId shape_id = b2CreatePolygonShape(body_id, &shapeDef, &box);
 
   TransformComponent t_c;
-  t_c.pos = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
-  t_c.size = meters_to_pixels(size_meters);
+  auto pos_2d = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
+  auto size_2d = meters_to_pixels(size_meters);
+  t_c.pos = vec3{ pos_2d.x, pos_2d.y, 0.0f };
+  t_c.size = vec3{ size_2d.x, size_2d.y, 0.0f };
 
   // float rnd_r = random(rnd, 0.0f, 1.0f);
   // float rnd_g = random(rnd, 0.0f, 1.0f);
@@ -187,6 +194,14 @@ game_init(GameData* data)
   data->r = &internal_r;
   auto& r = internal_r;
 
+  auto& camera_pos = data->camera_pos;
+  camera_pos = { -7.5, 3.2, -4.45 };
+
+  auto& camera_c = data->camera_c;
+  camera_c.projection = calculate_perspective_projection(screen_size.x, screen_size.y);
+  camera_c.pitch = 0.24f;
+  camera_c.yaw = 2.19;
+
   {
     const auto& view = r.view<const TransformComponent, const ColourComponent, const SpriteComponent>();
     SDL_Log("renderables: %zu", view.size_hint());
@@ -240,6 +255,7 @@ game_fixed_update(GameData* data)
   auto& r = internal_r;
 
   // Apply force to first dynamic body
+  /*
   {
     auto view = r.view<const PhysicsBodyComponent, const TransformComponent, const PlayerComponent>();
     for (const auto& [e, pb_c, t_c, player_c] : view.each()) {
@@ -254,6 +270,7 @@ game_fixed_update(GameData* data)
       break;
     }
   }
+  */
 
   // Apply jump force
   {
@@ -340,6 +357,7 @@ game_update(GameData* data)
 {
   const auto evts = data->events;
   auto& r = internal_r;
+  auto dt = data->dt;
 
   //
   // input events
@@ -354,38 +372,43 @@ game_update(GameData* data)
     pickup |= true;
   if (get_key_down(inputs_c, SDL_SCANCODE_KP_9))
     create_empty<Request_GameOver>(r);
-  if (get_key_down(inputs_c, SDL_SCANCODE_W))
-    keyboard_l.y = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_S))
-    keyboard_l.y = 1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_A))
-    keyboard_l.x = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_D))
-    keyboard_l.x = 1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_UP))
-    keyboard_r.y = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_DOWN))
-    keyboard_r.y = 1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_LEFT))
-    keyboard_r.x = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_RIGHT))
-    keyboard_r.x = 1;
-  if (get_key_up(inputs_c, SDL_SCANCODE_W))
-    keyboard_l.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_S))
-    keyboard_l.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_A))
-    keyboard_l.x = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_D))
-    keyboard_l.x = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_UP))
-    keyboard_r.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_DOWN))
-    keyboard_r.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_LEFT))
-    keyboard_r.x = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
-    keyboard_r.x = 0;
+
+  /*
+if (get_key_down(inputs_c, SDL_SCANCODE_W))
+  keyboard_l.y = -1;
+if (get_key_down(inputs_c, SDL_SCANCODE_S))
+  keyboard_l.y = 1;
+if (get_key_down(inputs_c, SDL_SCANCODE_A))
+  keyboard_l.x = -1;
+if (get_key_down(inputs_c, SDL_SCANCODE_D))
+  keyboard_l.x = 1;
+if (get_key_down(inputs_c, SDL_SCANCODE_UP))
+  keyboard_r.y = -1;
+if (get_key_down(inputs_c, SDL_SCANCODE_DOWN))
+  keyboard_r.y = 1;
+if (get_key_down(inputs_c, SDL_SCANCODE_LEFT))
+  keyboard_r.x = -1;
+if (get_key_down(inputs_c, SDL_SCANCODE_RIGHT))
+  keyboard_r.x = 1;
+if (get_key_up(inputs_c, SDL_SCANCODE_W))
+  keyboard_l.y = 0;
+if (get_key_up(inputs_c, SDL_SCANCODE_S))
+  keyboard_l.y = 0;
+if (get_key_up(inputs_c, SDL_SCANCODE_A))
+  keyboard_l.x = 0;
+if (get_key_up(inputs_c, SDL_SCANCODE_D))
+  keyboard_l.x = 0;
+if (get_key_up(inputs_c, SDL_SCANCODE_UP))
+  keyboard_r.y = 0;
+if (get_key_up(inputs_c, SDL_SCANCODE_DOWN))
+  keyboard_r.y = 0;
+if (get_key_up(inputs_c, SDL_SCANCODE_LEFT))
+  keyboard_r.x = 0;
+if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
+  keyboard_r.x = 0;
+*/
+
+  data->mouse_dt = vec2{ 0, 0 };
 
   for (const SDL_Event& evt : evts) {
     if (evt.type == SDL_EVENT_KEY_DOWN) {
@@ -429,6 +452,12 @@ game_update(GameData* data)
         spawn(data, data->mouse_pos, { stuff_size, stuff_size }, { 1.0, 1.0, 1.0 });
       }
     }
+    if (evt.type == SDL_EVENT_MOUSE_MOTION) {
+      SDL_MouseMotionEvent m_evt = evt.motion;
+      // data->mouse_pos = { m_evt.x, m_evt.y };
+      data->mouse_dt = { m_evt.xrel, m_evt.yrel };
+    }
+    // SDL_Log("mouse_dt: (%f, %f)", data->mouse_dt.x, data->mouse_dt.y);
 
     //
     // joysticks
@@ -461,8 +490,8 @@ game_update(GameData* data)
   }
 
   auto& ui_data = data->ui_data;
-  ui_data.keyboard_l = keyboard_l;
-  ui_data.keyboard_r = keyboard_r;
+  // ui_data.keyboard_l = keyboard_l;
+  // ui_data.keyboard_r = keyboard_r;
 
   int n_joysticks = 0;
   auto* joysticks = SDL_GetJoysticks(&n_joysticks);
@@ -523,14 +552,14 @@ game_update(GameData* data)
     break;
   }
 
-  l_input = keyboard_l + controller_l;
-  r_input = keyboard_r + controller_r;
+  // l_input = keyboard_l + controller_l;
+  // r_input = keyboard_r + controller_r;
 
-  // clamp the inputs
-  l_input.x = std::clamp(l_input.x, -1.0f, 1.0f);
-  l_input.y = std::clamp(l_input.y, -1.0f, 1.0f);
-  r_input.x = std::clamp(r_input.x, -1.0f, 1.0f);
-  r_input.y = std::clamp(r_input.y, -1.0f, 1.0f);
+  // // clamp the inputs
+  // l_input.x = std::clamp(l_input.x, -1.0f, 1.0f);
+  // l_input.y = std::clamp(l_input.y, -1.0f, 1.0f);
+  // r_input.x = std::clamp(r_input.x, -1.0f, 1.0f);
+  // r_input.y = std::clamp(r_input.y, -1.0f, 1.0f);
 
   // set camera to position of transform
   // {
@@ -546,8 +575,53 @@ game_update(GameData* data)
   // SDL_Log("camera_pos: %0.2f, %0.2f", camera_pos.x, camera_pos.y);
 
   // update camera with right analogue
-  camera_pos = camera_pos + data->dt * camera_speed * r_input;
-  data->camera_pos = camera_pos;
+  // camera_pos = camera_pos + data->dt * camera_speed * r_input;
+  // data->camera_pos = camera_pos;
+
+  auto& camera_c = data->camera_c;
+  auto& camera_pos = data->camera_pos;
+
+  if (capture_mouse) {
+    auto mouse_input = data->mouse_dt;
+    const float mouse_input_x = mouse_input.x * mouse_sens;
+    camera_c.yaw += mouse_input_x;
+    const float mouse_input_y = mouse_input.y * mouse_sens;
+    camera_c.pitch += mouse_input_y;
+    if (camera_c.pitch > 89.0f)
+      camera_c.pitch = 89.0f;
+    if (camera_c.pitch < -89.0f)
+      camera_c.pitch = -89.0f;
+  }
+
+  // // const auto fwd_dir = glm::rotate(vec3_to_quat(t.rotation), forward);
+  // const auto fwd_dir = forward;
+
+  // update camera pos with wasd
+  const float velocity = camera_speed * dt;
+  if (get_key_held(inputs_c, SDL_SCANCODE_W))
+    camera_pos += get_forward_dir(camera_c) * velocity;
+  if (get_key_held(inputs_c, SDL_SCANCODE_S))
+    camera_pos -= get_forward_dir(camera_c) * velocity;
+  if (get_key_held(inputs_c, SDL_SCANCODE_A))
+    camera_pos -= get_right_dir(camera_c) * velocity;
+  if (get_key_held(inputs_c, SDL_SCANCODE_D))
+    camera_pos += get_right_dir(camera_c) * velocity;
+  if (get_key_held(inputs_c, SDL_SCANCODE_SPACE))
+    camera_pos += get_up_dir(camera_c) * velocity;
+  if (get_key_held(inputs_c, SDL_SCANCODE_LSHIFT))
+    camera_pos -= get_up_dir(camera_c) * velocity;
+  if (get_key_down(inputs_c, SDL_SCANCODE_M)) {
+    capture_mouse = !capture_mouse;
+    // SDL_CaptureMouse(capture_mouse);
+    // if (SDL_CursorVisible() && capture_mouse)
+    //   SDL_HideCursor();
+    // else
+    //   SDL_ShowCursor();
+    SDL_Log("capture mouse: %i", capture_mouse);
+  }
+
+  camera_c.view =
+    calculate_perspective_view(TransformComponent{ .pos = { camera_pos.x, camera_pos.y, camera_pos.z } }, camera_c);
 
   // Update transforms via physics body.
   update_transforms_from_physics(r);
@@ -577,15 +651,14 @@ game_update(GameData* data)
     game_init(data);
   }
 
-  // populate ui data from the gamethread????
+  // populate game's copy of ui data from the gamethread
   {
     auto& hmm = ui_data.hmm;
     hmm.clear(); // .clear() is bad
-    const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
-    for (const auto& [e, t_c, col_c, inv_c] : view.each())
-      hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c });
+    // const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
+    // for (const auto& [e, t_c, col_c, inv_c] : view.each())
+    //   hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c });
 
-    ui_data.camera_pos = { camera_pos.x, camera_pos.y, 0.0f };
     ui_data.play_again = false;
     ui_data.game_over = gameover;
   }
@@ -617,10 +690,9 @@ game_update_ui(GameUIData* ui_data)
     ImGui::Text("sensor events: %i", data.n_sensor_events);
     ImGui::Text("renderables: %i", (int)ui_data->renderable.size());
     ImGui::Text("ui data hmm: %i", (int)ui_data->ui_data.hmm.size());
-    ImGui::Text("camera_pos: %0.2f, %0.2f, %0.2f",
-                ui_data->ui_data.camera_pos.x,
-                ui_data->ui_data.camera_pos.y,
-                ui_data->ui_data.camera_pos.z);
+    ImGui::Text("camera_pos: %0.2f, %0.2f, %0.2f", ui_data->camera_pos.x, ui_data->camera_pos.y, ui_data->camera_pos.z);
+    ImGui::Text("camera (pitch) %0.2f, (yaw) %0.2f", ui_data->camera_c.pitch, ui_data->camera_c.yaw);
+
     ImGui::End();
   }
 
@@ -642,7 +714,7 @@ game_update_ui(GameUIData* ui_data)
                 data.controller_r.y);
 
     ImGui::Text("Input");
-    ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
+    // ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
 
     ImGui::Text("MouseInput");
     auto& io = ImGui::GetIO();
@@ -655,6 +727,7 @@ game_update_ui(GameUIData* ui_data)
   update_ui_gameover_system(ui_data->ui_data);
 
   // Worldspace overlay.
+  /*
   {
     ImGuiWindowFlags flags = 0;
     flags |= ImGuiWindowFlags_NoDecoration;
@@ -672,19 +745,20 @@ game_update_ui(GameUIData* ui_data)
     for (const auto& ui : ui_data->ui_data.hmm) {
       // ImGui::PushID(eid);
 
-      const auto pos = ui.renderable.transform.pos;
-      const auto ss_pos = worldspace_to_screenspace({ camera_p.x, camera_p.y }, pos, screen_size);
-      ImGui::SetCursorScreenPos({ ss_pos.x, ss_pos.y });
+      // const auto pos = ui.renderable.transform.pos;
+      // const auto ss_pos = worldspace_to_screenspace({ camera_p.x, camera_p.y }, { pos.x, pos.y }, screen_size);
+      // ImGui::SetCursorScreenPos({ ss_pos.x, ss_pos.y });
 
       // const auto txt = std::format("eid: {} \n items: {}", (uint32_t)ui.entity, ui.inventory.items);
-      const auto txt = std::format("i: {}", ui.inventory.items);
-      ImGui::Text("%s", txt.c_str());
+      // const auto txt = std::format("i: {}", ui.inventory.items);
+      // ImGui::Text("%s", txt.c_str());
 
       // ImGui::PopID();
     }
 
     ImGui::End();
   }
+  */
 };
 
 // note: game_init() is called after game_refresh();

@@ -2,6 +2,7 @@
 
 #ifdef __cplusplus
 
+#define GLM_ENABLE_EXPERIMENTAL
 #include <SDL3/SDL.h>
 #include <box2d/box2d.h>
 #include <entt/entt.hpp>
@@ -9,6 +10,7 @@
 #include <glm/ext/matrix_float4x4.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <stb_image.h>
 
 #include <assimp/Importer.hpp>

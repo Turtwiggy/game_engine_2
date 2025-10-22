@@ -63,7 +63,7 @@ else()
 endif()
 
 # Precompile headers
-set(PCH_FILE ${CMAKE_SOURCE_DIR}/common/src/core/pch.hpp)
+set(PCH_FILE ${CMAKE_SOURCE_DIR}/common/src/pch.hpp)
 target_precompile_headers(game PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${PCH_FILE}>")
 set(PCH_INSTANTIATE_TEMPLATES ON)
 

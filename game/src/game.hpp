@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/common.hpp"
+#include "game_and_engine_interop.hpp"
 
 namespace game2d {
 

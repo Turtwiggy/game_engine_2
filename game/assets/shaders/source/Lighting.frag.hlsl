@@ -41,7 +41,7 @@ float4 main(Input input) : SV_Target0
     // float4 albedo = sprite_col;
     // float3 diffuse = max(dot(normal_col, light_dir), 0.0f) * albedo * light_col;
 
-    float dist = distance(frag_pos, light_pos.xy);
+    float dist = distance(frag_pos, light_pos.xyz);
     float attenuation = 1.0 - smoothstep(0.0, light_radius, dist);
     // float attenuation = (1.0 - dist / (light_radius * res.x));
 

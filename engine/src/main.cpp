@@ -1,15 +1,22 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
 // #include "box2d_parallel.hpp"
-#include "core/common.hpp"
-#include "core/graphics.hpp"
+#include "game_and_engine_interop.hpp"
 #include "imgui_helpers.hpp"
-#include "renderer/renderer_helpers.hpp"
-#include "sdl/sdl_exception.hpp"
-#include "sdl/sdl_hot_reload_dll.hpp"
-#include "sdl/sdl_setup.hpp"
-#include "sdl/sdl_shader.hpp"
+#include "modules/camera/perspective_helpers.hpp"
+#include "modules/glm/glm_helpers.hpp"
+#include "modules/models/model_helpers.hpp"
+#include "modules/models_animations/model_animation_components.hpp"
+#include "modules/models_animations/model_animation_helpers.hpp"
+#include "modules/renderer/renderer_helpers.hpp"
+#include "modules/sdl/sdl_exception.hpp"
+#include "modules/sdl/sdl_hot_reload_dll.hpp"
+#include "modules/sdl/sdl_setup.hpp"
+#include "modules/sdl/sdl_shader.hpp"
 #include "threadsafe_queue.hpp"
+#include <glm/ext/matrix_float4x4.hpp>
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/trigonometric.hpp>
 
 using namespace game2d;
 using namespace std::literals;
@@ -191,6 +198,8 @@ GameThread()
         });
 
         // copy anything else in to renderdata buffer.
+        wb.camera_c = game_data.camera_c;
+        wb.camera_pos = game_data.camera_pos;
         wb.ui_data = game_data.ui_data;
         wb.ui_data.game_dt = dt;
       }
@@ -247,7 +256,7 @@ CreateErrorPipeline()
   };
   const ShaderInput frag_input{
     .shaderFilename = "SolidColorInput.frag",
-    .samplerCount = 1,
+    .samplerCount = 0,
     .uniformBufferCount = 0,
     .storageBufferCount = 0,
     .storageTextureCount = 0,
@@ -316,46 +325,53 @@ SDL_GPUGraphicsPipeline*
 CreateModelPipeline(const SDL_GPUSampleCount sample_count)
 {
   const ShaderInput vert_input{
-    .shaderFilename = "TexturedQuadWithMatrix.vert",
+    .shaderFilename = "ModelAnimated.vert",
     .samplerCount = 0,
     .uniformBufferCount = 1,
-    .storageBufferCount = 0,
+    .storageBufferCount = 1,
     .storageTextureCount = 0,
   };
   const ShaderInput frag_input{
-    .shaderFilename = "TexturedQuad.frag",
-    .samplerCount = 1,
+    .shaderFilename = "ModelAnimated.frag",
+    .samplerCount = 0,
     .uniformBufferCount = 0,
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_3d_pipeline(device, window, vert_input, frag_input, sample_count);
+  return create_model_pipeline(device, window, vert_input, frag_input, sample_count);
 };
 
-SDL_GPUTransferBuffer*
-create_sprite_data_transfer_buffer(const int SPRITE_COUNT)
+struct BoneData
 {
-  const auto sprite_data_transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
-    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-    .size = static_cast<Uint32>(SPRITE_COUNT * sizeof(SpriteInstance)),
-  };
-  auto* sprite_data_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &sprite_data_transfer_buffer_info);
-  if (!sprite_data_transfer_buffer)
-    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
-  return sprite_data_transfer_buffer;
+  glm::mat4 matrix = glm::mat4(1.0f);
 };
 
+template<typename T>
 SDL_GPUBuffer*
-create_sprite_data_buffer(const int SPRITE_COUNT)
+create_data_buffer(const int count)
 {
-  const auto sprite_data_buffer_info = SDL_GPUBufferCreateInfo{
+  const auto buffer_info = SDL_GPUBufferCreateInfo{
     .usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
-    .size = static_cast<Uint32>(SPRITE_COUNT * sizeof(SpriteInstance)),
+    .size = static_cast<Uint32>(count * sizeof(T)),
   };
-  auto* sprite_data_buffer = SDL_CreateGPUBuffer(device, &sprite_data_buffer_info);
+  auto* sprite_data_buffer = SDL_CreateGPUBuffer(device, &buffer_info);
   if (!sprite_data_buffer)
     throw SDLException("Unable to SDL_CreateGPUBuffer()");
   return sprite_data_buffer;
+};
+
+template<typename T>
+SDL_GPUTransferBuffer*
+create_transfer_buffer(const int count)
+{
+  const auto tb_info = SDL_GPUTransferBufferCreateInfo{
+    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+    .size = static_cast<Uint32>(count * sizeof(T)),
+  };
+  auto* tb = SDL_CreateGPUTransferBuffer(device, &tb_info);
+  if (!tb)
+    throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
+  return tb;
 };
 
 void
@@ -370,153 +386,33 @@ RenderThread()
   renderer_info.window = window;
   setup_renderer(renderer_info);
 
-  auto msaa = SDL_GPU_SAMPLECOUNT_2;
-  const auto viking_texture = create_and_upload_gpu_texture(device, "models/viking_room.png"s);
+  static SINGLE_ModelsComponent models;
+  static SINGLE_AnimatorComponent anims;
+  {
+    models.model_0_data = load_model(device, "assets/models/wiggy_mech_2d4b.fbx"s);
+    anims.animation_0_data = load_animation(models.model_0_data);
+    load_animations(anims, models);
+  }
+
+  auto msaa = SDL_GPU_SAMPLECOUNT_1;
+  // const auto viking_texture = create_and_upload_gpu_texture(device, "models/viking_room.png"s);
   const auto custom_texture_out = create_and_upload_gpu_texture(device, "textures/custom.png"s);
   const auto custom_texture_normal_out = create_and_upload_gpu_texture(device, "textures/custom_normal.png"s);
   auto* sprite_pipeline = CreateSpritePipeline();
   auto* normal_pipeline = CreateSpriteNormalPipeline();
   auto* lighting_pipeline = CreateLightingPipeline();
-  auto* model_pipeline = CreateModelPipeline(msaa);
   auto* error_pipeline = CreateErrorPipeline();
-  auto* sprite_data_transfer_buffer = create_sprite_data_transfer_buffer(SPRITE_COUNT);
-  auto* sprite_data_buffer = create_sprite_data_buffer(SPRITE_COUNT);
-  auto* quad_data_transfer_buffer = create_sprite_data_transfer_buffer(1); // fullscreen quad
-  auto* quad_data_buffer = create_sprite_data_buffer(1);
+  auto* model_pipeline = CreateModelPipeline(msaa);
 
-  SDL_GPUBuffer* vertex_buffer;
-  SDL_GPUBuffer* index_buffer;
-  std::vector<VertexFinal> vertex_data;
-  std::vector<Index> index_data;
+  auto* sprite_data_transfer_buffer = create_transfer_buffer<SpriteInstance>(SPRITE_COUNT);
+  auto* sprite_data_buffer = create_data_buffer<SpriteInstance>(SPRITE_COUNT);
 
-  {
-    // vertex_data = {
-    // quad
-    // { -0.5f, -0.5f, 0.0f, /*uv*/ 0.0f, 0.0f }, //
-    // { 0.5f, -0.5f, 0.0f, /*uv*/ 1.0f, 0.0f },  //
-    // { 0.5f, 0.5f, 0.0f, /*uv*/ 1.0f, 1.0f },   //
-    // { -0.5f, 0.5f, 0.0f, /*uv*/ 0.0f, 1.0f },  //
-    // };
-    // index_data = {
-    // { 0 }, { 1 }, { 2 }, { 0 }, { 2 }, { 3 },
-    // };
+  auto* quad_data_transfer_buffer = create_transfer_buffer<SpriteInstance>(1); // fullscreen quad
+  auto* quad_data_buffer = create_data_buffer<SpriteInstance>(1);
 
-    // cube
-    // vertex_data = {
-    //   { -1.0f, -1.0f, 1.0f, 0.0f, 0.0f },  // 0 - front bottom left
-    //   { 1.0f, -1.0f, 1.0f, 1.0f, 0.0f },   // 1 - front bottom right
-    //   { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f },    // 2 - front top right
-    //   { -1.0f, 1.0f, 1.0f, 0.0f, 1.0f },   // 3 - front top left
-    //   { -1.0f, -1.0f, -1.0f, 1.0f, 0.0f }, // 4 - back bottom left
-    //   { 1.0f, -1.0f, -1.0f, 0.0f, 0.0f },  // 5 - back bottom right
-    //   { 1.0f, 1.0f, -1.0f, 0.0f, 1.0f },   // 6 - back top right
-    //   { -1.0f, 1.0f, -1.0f, 1.0f, 1.0f }   // 7 - back top left
-    // };
-    // index_data = {
-    //   { 0 }, { 1 }, { 2 }, { 2 }, { 3 }, { 0 }, //
-    //   { 5 }, { 4 }, { 7 }, { 7 }, { 6 }, { 5 }, //
-    //   { 3 }, { 2 }, { 6 }, { 6 }, { 7 }, { 3 }, //
-    //   { 4 }, { 0 }, { 3 }, { 3 }, { 7 }, { 4 }, //
-    //   { 1 }, { 5 }, { 6 }, { 6 }, { 2 }, { 1 }, //
-    //   { 4 }, { 0 }, { 3 }, { 3 }, { 7 }, { 4 }  //
-    // };
-
-    // load a 3d model
-    SDL_Log("Loading model... (viking_room.obj)");
-    auto start = std::chrono::high_resolution_clock::now();
-    Assimp::Importer importer;
-    const auto* scene{ importer.ReadFile("assets/models/viking_room.obj", aiProcess_Triangulate) };
-    if (!scene)
-      throw std::runtime_error("Failed to load model: viking_room.obj"s);
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-    SDL_Log("Model loaded in %zu ms.", duration);
-
-    // process 3d model
-    {
-      for (int i = 0; i < scene->mNumMeshes; i++) {
-        const auto* mesh = scene->mMeshes[i];
-        for (int j = 0; j < mesh->mNumVertices; j++) {
-          const auto& vertex = mesh->mVertices[j];
-          const auto pos = vec3{ vertex.x, vertex.y, vertex.z };
-          const auto uv =
-            mesh->mTextureCoords[0] ? vec2{ mesh->mTextureCoords[0][j].x, mesh->mTextureCoords[0][j].y } : vec2{ 0, 0 };
-          vertex_data.push_back({ pos.x, pos.y, pos.z, uv.x, uv.y });
-        }
-        for (int j = 0; j < mesh->mNumFaces; j++) {
-          const auto& face = mesh->mFaces[j];
-          for (int k = 0; k < face.mNumIndices; k++)
-            index_data.push_back({ (Uint16)face.mIndices[k] });
-        }
-      }
-    }
-
-    const Uint32 vertex_data_mem_size = sizeof(VertexFinal) * vertex_data.size();
-    const Uint32 index_data_mem_size = sizeof(Index) * index_data.size();
-
-    // Create the vertex buffer
-    const auto vertex_buffer_info = SDL_GPUBufferCreateInfo{
-      .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
-      .size = vertex_data_mem_size,
-    };
-    vertex_buffer = SDL_CreateGPUBuffer(device, &vertex_buffer_info);
-    if (!vertex_buffer)
-      throw SDLException("Failed to create GpuBuffer");
-    SDL_SetGPUBufferName(device, vertex_buffer, "VertexBuffer");
-
-    // Create an index buffer
-    const auto index_buffer_info = SDL_GPUBufferCreateInfo{
-      .usage = SDL_GPU_BUFFERUSAGE_INDEX,
-      .size = index_data_mem_size,
-    };
-    index_buffer = SDL_CreateGPUBuffer(device, &index_buffer_info);
-    if (!index_buffer)
-      throw SDLException("Failed to create GpuBuffer");
-    SDL_SetGPUBufferName(device, index_buffer, "IndexBuffer");
-
-    // To get data in to the vertex buffer, we have to use a transfer buffer.
-    const auto transfer_buffer_info = SDL_GPUTransferBufferCreateInfo{
-      .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-      .size = vertex_data_mem_size + index_data_mem_size,
-    };
-
-    // Map the buffer in to cpu memory
-    auto* transfer_buffer = SDL_CreateGPUTransferBuffer(device, &transfer_buffer_info);
-    if (!transfer_buffer)
-      throw SDLException("Unable to SDL_CreateGPUTransferBuffer()");
-
-    // Copy the data in
-    auto* transfer_data = (Uint8*)SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
-    std::span vertex_buffer_data = { reinterpret_cast<VertexFinal*>(transfer_data), vertex_data.size() };
-    std::ranges::copy(vertex_data, vertex_buffer_data.begin());
-    std::span index_buffer_data = { reinterpret_cast<Index*>(transfer_data + vertex_data_mem_size), index_data.size() };
-    std::ranges::copy(index_data, index_buffer_data.begin());
-    SDL_UnmapGPUTransferBuffer(device, transfer_buffer); // note: need to unmap before aquire gpu command
-
-    // Upload the vertex_buffer and index_buffer
-    SDL_GPUCommandBuffer* upload_cmd_buf = SDL_AcquireGPUCommandBuffer(device);
-    if (upload_cmd_buf == nullptr)
-      throw SDLException("Could not aquire GPU command buffer");
-
-    SDL_GPUCopyPass* upload_copy_pass = SDL_BeginGPUCopyPass(upload_cmd_buf);
-    {
-      auto src = SDL_GPUTransferBufferLocation{ .transfer_buffer = transfer_buffer, .offset = 0 };
-      auto dst = SDL_GPUBufferRegion{ .buffer = vertex_buffer, .size = vertex_buffer_info.size };
-      SDL_UploadToGPUBuffer(upload_copy_pass, &src, &dst, false);
-
-      src.offset = vertex_buffer_info.size;
-      dst.buffer = index_buffer;
-      dst.size = index_buffer_info.size;
-      SDL_UploadToGPUBuffer(upload_copy_pass, &src, &dst, false);
-    }
-    SDL_EndGPUCopyPass(upload_copy_pass);
-
-    const auto submit = SDL_SubmitGPUCommandBuffer(upload_cmd_buf);
-    if (!submit)
-      throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
-
-    SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
-  }
+  auto* bone_data_transfer_buffer = create_transfer_buffer<BoneData>(anims.amount_of_bones);
+  auto* bone_data_buffer = create_data_buffer<BoneData>(anims.amount_of_bones);
+  assert(sizeof(BoneData) == sizeof(glm::mat4));
 
   const auto create_render_texture = []() -> SDL_GPUTexture* {
     // The contents of this texture are undefined until data is written to the texture,
@@ -590,8 +486,12 @@ RenderThread()
 
       game_ui_data.renderable = read_buffer.renderable; // take a copy
       game_ui_data.ui_data = read_buffer.ui_data;
+      game_ui_data.camera_c = read_buffer.camera_c;
+      game_ui_data.camera_pos = read_buffer.camera_pos;
     }
     const auto& renderables = game_ui_data.renderable;
+    const auto& camera_c = game_ui_data.camera_c;
+    const auto& camera_pos = game_ui_data.camera_pos;
 
     //
     // grab all the events
@@ -659,7 +559,7 @@ RenderThread()
     {
       ImGui::Begin("Debug");
 
-      static int msaa_factor = 8;
+      static int msaa_factor = 2;
       ImGui::InputInt("msaa", &msaa_factor);
       if (ImGui::Button("Refresh Msaa")) {
 
@@ -682,6 +582,12 @@ RenderThread()
         SDL_ReleaseGPUGraphicsPipeline(device, model_pipeline);
         model_pipeline = CreateModelPipeline(msaa);
       }
+
+      ImGui::Text("anim: %f", anims.current_time);
+      if (ImGui::Button("StartAnim"))
+        anims.current_animation = &anims.animation_0_data;
+      if (ImGui::Button("StopAnim"))
+        anims.current_animation = nullptr;
 
       ImGui::End();
 
@@ -722,21 +628,12 @@ RenderThread()
       const float dt = (float)(1e-9 * (float)dt_ns);
       constexpr float M_PI = 3.141592653589;
       const float aspect_ratio = (float)window_w / (float)window_h;
-      const auto cam_pos = vec3{ game_ui_data.ui_data.camera_pos.x, game_ui_data.ui_data.camera_pos.y, 0 };
-      const auto view_matrix = glm::lookAt(glm::vec3{ 0, 0, 2.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
-      const auto proj_persp_matrix = glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 100.0f);
       const auto proj_ortho_matrix = glm::ortho(0.0f, (float)window_w, (float)window_h, 0.0f);
-      auto vp_matrix = proj_ortho_matrix * view_matrix;
+      const auto view_matrix = glm::lookAt(glm::vec3{ 0.0f, 0.0f, 2.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
+      const auto vp_matrix = proj_ortho_matrix * view_matrix;
 
-      auto model_matrix = glm::mat4(1.0f);
-
-      static float t = 0.0f;
-      t += dt;
-      model_matrix = glm::rotate(model_matrix, glm::radians(t) * 10.0f, { 1.0f, 1.0f, 1.0f });
-
-      // model_matrix = Matrix4x4_Rotate(model_matrix, radians(t) * 0.01f, vec3{ 0.0f, 1.0f, 0.0f });
-      // const auto mvp_matrix = camera_proj * v_matrix * model_matrix;
-      auto mvp_matrix = proj_persp_matrix * view_matrix * model_matrix;
+      // this should probaby be in the game() loop
+      update_animation(anims, dt);
 
       // "One can encode multiple render passes
       // (or alternate between render and compute passes) in a single command buffer.
@@ -864,6 +761,38 @@ RenderThread()
         SDL_EndGPUCopyPass(copy_pass);
       }
 
+      // Upload bone data matricies.
+      {
+        const auto& final_bone_matrices = anims.final_bone_matrices;
+        const auto matrices_size = final_bone_matrices.size();
+
+        BoneData* data_ptr = (BoneData*)SDL_MapGPUTransferBuffer(device, bone_data_transfer_buffer, true);
+        for (int i = 0; i < anims.amount_of_bones; i++) {
+          // upload the data.
+          if (i < matrices_size)
+            data_ptr[i].matrix = final_bone_matrices[i];
+          else
+            data_ptr[i].matrix = glm::mat4(1.0f);
+        }
+        SDL_UnmapGPUTransferBuffer(device, bone_data_transfer_buffer);
+
+        // Upoad instance data.
+        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buf);
+        {
+          const auto transfer_buffer_loc = SDL_GPUTransferBufferLocation{
+            .transfer_buffer = bone_data_transfer_buffer,
+            .offset = 0,
+          };
+          const auto gpu_buffer_region_loc = SDL_GPUBufferRegion{
+            .buffer = bone_data_buffer,
+            .offset = 0,
+            .size = (uint32_t)(final_bone_matrices.size() * sizeof(BoneData)),
+          };
+          SDL_UploadToGPUBuffer(copy_pass, &transfer_buffer_loc, &gpu_buffer_region_loc, true);
+        }
+        SDL_EndGPUCopyPass(copy_pass);
+      }
+
       // render the sprites to a texture
       {
         const SDL_GPUColorTargetInfo col_info_a = {
@@ -918,15 +847,13 @@ RenderThread()
         SDL_EndGPURenderPass(render_pass);
       }
 
-      // render the viking model
+      // render an animated model
       {
-
         const SDL_GPUDepthStencilTargetInfo depth_info_c = {
           .texture = msaa_depth_texture,
           .clear_depth = 1.0f,
           .load_op = SDL_GPU_LOADOP_CLEAR,
         };
-
         SDL_GPUColorTargetInfo col_info_c{
           .mip_level = 0,
           .layer_or_depth_plane = 0,
@@ -934,7 +861,6 @@ RenderThread()
           .load_op = SDL_GPU_LOADOP_CLEAR,
           .cycle = false,
         };
-
         if (msaa != SDL_GPU_SAMPLECOUNT_1) {
           col_info_c.texture = msaa_texture;
           col_info_c.resolve_texture = gpu_texture_c; // resolve_texture must have sample_count of 1
@@ -947,20 +873,40 @@ RenderThread()
         SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, &col_info_c, 1, &depth_info_c);
         {
           SDL_BindGPUGraphicsPipeline(render_pass, model_pipeline);
+          SDL_BindGPUVertexStorageBuffers(render_pass, 0, &bone_data_buffer, 1);
 
-          SDL_GPUBufferBinding vertex_binding{ vertex_buffer, 0 };
-          SDL_BindGPUVertexBuffers(render_pass, 0, &vertex_binding, 1);
+          const auto persp_view = camera_c.view;
+          const auto persp_proj = camera_c.projection;
+
+          glm::mat4 model_matrix(1.0f);
+          // model_matrix = glm::scale(model_matrix, t.scale);
+          // model_matrix = Matrix4x4_Rotate(model_matrix, radians(t) * 0.01f, vec3{ 0.0f, 1.0f, 0.0f });
+          // model = glm::translate(model, t.position);
+          // model = glm::scale(model, t.scale);
+          // model_matrix *= glm::toMat4(vec3_to_quat({ glm::radians(90.0f), 0, 0 }));
+          // // draw_model(models_c.models_to_load[0]);
+          // static float t = 0.0f;
+          // t += dt;
+          // model_matrix = glm::rotate(model_matrix, glm::radians(t) * 10.0f, { 0.0f, 1.0f, 0.0f });
+          model_matrix = glm::scale(model_matrix, { 0.01, 0.01, 0.01 });
+
+          const auto mvp_matrix = persp_proj * persp_view * model_matrix;
           SDL_PushGPUVertexUniformData(cmd_buf, 0, &mvp_matrix, sizeof(glm::mat4));
 
-          const auto fragment_samplers = std::vector<SDL_GPUTextureSamplerBinding>{
-            { .texture = viking_texture.texture, .sampler = renderer_info.samplers[0] },
-          };
-          SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers.data(), (uint32_t)fragment_samplers.size());
+          const auto& model = models.model_0_data;
+          for (const auto& mesh : model.meshes) {
 
-          // by 2h44 this should be working
-          SDL_GPUBufferBinding index_binding{ index_buffer, 0 };
-          SDL_BindGPUIndexBuffer(render_pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
-          SDL_DrawGPUIndexedPrimitives(render_pass, (Uint32)index_data.size(), 1, 0, 0, 0);
+            auto* vertex_buffer = mesh.vertex_buffer;
+            auto* index_buffer = mesh.index_buffer;
+            auto index_buffer_size = mesh.index_data.size();
+
+            SDL_GPUBufferBinding vertex_binding{ vertex_buffer, 0 };
+            SDL_BindGPUVertexBuffers(render_pass, 0, &vertex_binding, 1);
+
+            SDL_GPUBufferBinding index_binding{ index_buffer, 0 };
+            SDL_BindGPUIndexBuffer(render_pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+            SDL_DrawGPUIndexedPrimitives(render_pass, (uint32_t)index_buffer_size, 1, 0, 0, 0);
+          }
         }
         SDL_EndGPURenderPass(render_pass);
       }
@@ -1038,10 +984,13 @@ RenderThread()
   SDL_ReleaseGPUTexture(device, msaa_depth_texture);
   SDL_ReleaseGPUTexture(device, custom_texture_out.texture);
   SDL_ReleaseGPUTexture(device, custom_texture_normal_out.texture);
-  SDL_ReleaseGPUTexture(device, viking_texture.texture);
+  // SDL_ReleaseGPUTexture(device, viking_texture.texture);
   SDL_ReleaseGPUTransferBuffer(device, sprite_data_transfer_buffer);
   SDL_ReleaseGPUTransferBuffer(device, quad_data_transfer_buffer);
+  SDL_ReleaseGPUTransferBuffer(device, bone_data_transfer_buffer);
   SDL_ReleaseGPUBuffer(device, sprite_data_buffer);
+  SDL_ReleaseGPUBuffer(device, quad_data_buffer);
+  SDL_ReleaseGPUBuffer(device, bone_data_buffer);
 };
 
 //

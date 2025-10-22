@@ -32,7 +32,7 @@
 	},
 	"c++ new body file": {
 		"body": [
-			"#include \"core/pch.hpp\"",
+			"#include \"pch.hpp\"",
 			"",
 			"#include \"${1:system}.hpp\"",
 			"",

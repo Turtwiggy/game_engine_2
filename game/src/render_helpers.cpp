@@ -1,10 +1,10 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
 #include "render_helpers.hpp"
 
-#include "core/box2d/box2d_components.hpp"
-#include "core/box2d/box2d_helpers.hpp"
-#include "core/common.hpp"
+#include "game_and_engine_interop.hpp"
+#include "modules/box2d/box2d_components.hpp"
+#include "modules/box2d/box2d_helpers.hpp"
 
 namespace game2d {
 
@@ -27,8 +27,8 @@ update_transforms_from_physics(entt::registry& r)
     const vec2 pos_in_pixels = meters_to_pixels(b2_pos);
     const vec2 size_in_pixels = meters_to_pixels({ w, h });
     const vec2 pos_tl = pos_in_pixels - (0.5f * size_in_pixels);
-    t_c.pos = pos_tl;
-    t_c.size = size_in_pixels;
+    t_c.pos = vec3{ pos_tl.x, pos_tl.y, 0.0f };
+    t_c.size = vec3{ size_in_pixels.x, size_in_pixels.y, 0.0f };
     t_c.rotation_radians = b2Rot_GetAngle(b2Body_GetRotation(id));
   }
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/common.hpp"
+#include "game_and_engine_interop.hpp"
 #include <SDL3/SDL_gpu.h>
 
 namespace game2d {

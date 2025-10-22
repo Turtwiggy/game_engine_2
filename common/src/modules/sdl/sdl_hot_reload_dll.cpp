@@ -1,4 +1,4 @@
-#include "core/pch.hpp"
+#include "pch.hpp"
 
 #include "sdl_exception.hpp"
 #include "sdl_hot_reload_dll.hpp"
