@@ -34,7 +34,11 @@ SDL_GPUTexture*
 create_depth_texture(SDL_GPUDevice* device, int w, int h, const SDL_GPUSampleCount sample_count);
 
 SDL_GPUGraphicsPipeline*
-create_2d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag);
+create_2d_pipeline(SDL_GPUDevice* device,
+                   SDL_Window* window,
+                   const ShaderInput& vert,
+                   const ShaderInput& frag,
+                   const SDL_GPUSampleCount msaa);
 
 // SDL_GPUGraphicsPipeline*
 // create_3d_pipeline(SDL_GPUDevice* device,

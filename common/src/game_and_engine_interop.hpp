@@ -110,13 +110,12 @@ struct GameData
 {
   entt::registry* r = nullptr;
   float dt = 0.0f;
-  b2WorldId world_id;
+  Uint64 dt_ns = 0;
 
   vec2 mouse_pos{ 0, 0 };
   vec2 mouse_dt{ 0, 0 };
   std::vector<SDL_Event> events;
 
-  PerspectiveCamera camera_c;
   glm::vec3 camera_pos;
 
   CommonUiData ui_data;
@@ -130,7 +129,6 @@ struct RenderData
 {
   std::mutex mtx; // mutex to protect access to data
 
-  PerspectiveCamera camera_c;
   glm::vec3 camera_pos;
 
   // data
@@ -143,7 +141,6 @@ struct GameUIData
 {
   ImGuiContext* ctx;
 
-  PerspectiveCamera camera_c;
   glm::vec3 camera_pos;
 
   std::vector<Renderable> renderable;

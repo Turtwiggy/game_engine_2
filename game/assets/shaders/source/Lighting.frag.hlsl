@@ -25,7 +25,15 @@ float4 main(Input input) : SV_Target0
     Screen_SpriteTexture.GetDimensions(SpriteTextureW, SpriteTextureH);
     float2 res = float2(SpriteTextureW, SpriteTextureH);
 
-    float3 sprite_col = Screen_SpriteTexture.Sample(SpriteSampler, input.TexCoord).xyz;
+    float4 sprite_col = Screen_SpriteTexture.Sample(SpriteSampler, input.TexCoord);
+    
+    // background
+    // if(length(sprite_col.rgb) == 0){
+        //     return float4(0.3, 0.3, 0.3, 1.0);
+    // }
+
+    return float4(sprite_col.xyz, 1.0);
+
     float3 normal_tex = Screen_NormalTexture.Sample(NormalSampler, input.TexCoord).xyz;
     float3 normal = normalize(normal_tex * 2.0 - 1.0); // [0, 1] to [-1, 1]
 
@@ -50,8 +58,5 @@ float4 main(Input input) : SV_Target0
     float3 ambient = float3(0.7, 0.7, 0.7) * albedo;
     float3 lighting = (ambient + diffuse) * attenuation;
 
-    // if(length(sprite_col.xyz) == 0.0)
-    //     return float4(0.3, 0.3, 0.3, 1.0);
-    
     return float4(lighting.xyz, 1.0f);
 }

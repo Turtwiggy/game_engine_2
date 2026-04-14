@@ -2,16 +2,19 @@
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_scancode.h>
-#include <entt/fwd.hpp>
-#include <unordered_set>
+
+#include <vector>
 
 namespace game2d {
 
 struct SINGLE_Inputs
 {
-  std::unordered_set<SDL_Scancode> keys_down;
-  std::unordered_set<SDL_Scancode> keys_up;
-  std::unordered_set<SDL_Scancode> keys_held;
+  // keys pressed in Update() to be processed in FixedUpdate()
+  // note: this is deliberately not a Set incase a user e.g.
+  // press W, release W, press W before one FixedUpdate() occurs.
+  std::vector<SDL_Scancode> keys_down;
+  std::vector<SDL_Scancode> keys_up;
+  std::vector<SDL_Scancode> keys_held;
 };
 
 bool
@@ -20,7 +23,6 @@ get_key_down(const SINGLE_Inputs& inputs_c, const SDL_Scancode scancode);
 bool
 get_key_up(const SINGLE_Inputs& inputs_c, const SDL_Scancode scancode);
 
-// note: not properly implemented yet
 bool
 get_key_held(const SINGLE_Inputs& inputs_c, const SDL_Scancode scancode);
 

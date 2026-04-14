@@ -19,8 +19,11 @@ struct EventQueue
   {
     std::lock_guard<std::mutex> lock(m);
 
-    if (data.size() > 0)
-      return std::move(data);
+    if (data.size() > 0) {
+      auto result = std::move(data);
+      data.clear();
+      return result;
+    }
 
     return {};
   }

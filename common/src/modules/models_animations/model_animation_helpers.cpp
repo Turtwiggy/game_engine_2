@@ -211,7 +211,7 @@ load_animation(const Model& model)
   Animation result;
 
   // if (scene->mNumAnimations == 0)
-  //   return data; // exit
+  //   return result; // exit
 
   SDL_Log("Animation: %s", scene->mAnimations[0]->mName.C_Str());
   auto anim = scene->mAnimations[0];

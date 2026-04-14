@@ -27,6 +27,7 @@ struct MeshIndex
 
 struct Mesh
 {
+  std::string name;
   std::vector<MeshVertex> vertex_data;
   std::vector<MeshIndex> index_data;
 

@@ -205,7 +205,11 @@ process_mesh(Model& model, aiMesh* mesh, const aiScene* scene)
   // this bone will have on a set of vertices on the mesh.
   extract_bone_weight_for_vertices(model, vertices, mesh, scene);
 
-  return Mesh(std::move(vertices), std::move(indices));
+  return Mesh{
+    .name = mesh->mName.C_Str(),
+    .vertex_data = std::move(vertices),
+    .index_data = std::move(indices),
+  };
 }
 
 void
@@ -311,7 +315,8 @@ load_model(SDL_GPUDevice* device, const std::string path)
       throw SDLException("Could not SDL_SubmitGPUCommandBuffer()");
     SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
 
-    SDL_Log("loaded mesh with %zu vertices, %zu indices, %zu bones",
+    SDL_Log("loaded mesh %s with %zu vertices, %zu indices, %zu bones",
+            mesh.name.c_str(),
             vertex_data.size(),
             index_data.size(),
             model.bone_info.size());

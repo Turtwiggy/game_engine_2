@@ -1,0 +1,73 @@
+#include "pch.hpp"
+
+#include "raws_components.hpp"
+
+#include "modules/box2d/box2d_components.hpp"
+#include "modules/box2d/box2d_helpers.hpp"
+#include "modules/physics/physics_components.hpp"
+
+namespace game2d {
+
+SpriteComponent
+default_sprite()
+{
+  const SpriteComponent s{
+    .sprite_max_x = 32.0f,
+    .sprite_max_y = 32.0f,
+    .sprite_pos_x = 0.0f,
+    .sprite_pos_y = 0.0f,
+    .sprite_wh_x = 1.0f,
+    .sprite_wh_y = 1.0f,
+  };
+  return s;
+}
+
+entt::entity
+spawn(entt::registry& r,
+      const vec2 pos,
+      const vec2 size,
+      const ColourComponent colour,
+      const bool is_static,
+      const bool is_sensor)
+{
+  const auto& physics_c = r.ctx().get<SINGLE_Physics>();
+  const auto world_id = physics_c.worldId;
+
+  b2Vec2 size_meters = pixels_to_meters(size);
+  b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
+
+  b2BodyDef bodyDef = b2DefaultBodyDef();
+  bodyDef.type = is_static ? b2_staticBody : b2_dynamicBody;
+  bodyDef.position = b2Vec2{ pixels_to_meters(pos) };
+  bodyDef.fixedRotation = true;
+  b2BodyId body_id = b2CreateBody(world_id, &bodyDef);
+
+  b2Body_SetLinearDamping(body_id, 5.0f);
+
+  b2ShapeDef shapeDef = b2DefaultShapeDef();
+  shapeDef.isSensor = is_sensor;
+  shapeDef.enableContactEvents = true;
+  shapeDef.enableSensorEvents = true;
+  b2ShapeId shape_id = b2CreatePolygonShape(body_id, &shapeDef, &box);
+
+  TransformComponent t_c;
+  auto pos_2d = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
+  auto size_2d = meters_to_pixels(size_meters);
+  t_c.pos = vec3{ pos_2d.x, pos_2d.y, 0.0f };
+  t_c.size = vec3{ size_2d.x, size_2d.y, 0.0f };
+
+  entt::entity e = r.create();
+  r.emplace<TransformComponent>(e, t_c);
+  r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
+  r.emplace<SpriteComponent>(e, default_sprite());
+  r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ .id = body_id, .shape_ids = { shape_id } });
+  set_entity_from_body_id(body_id, e);
+
+  entt::entity shape_e = r.create();
+  r.emplace<PhysicsShapeComponent>(shape_e, PhysicsShapeComponent{ .body_id = body_id, .shape_id = shape_id });
+  set_entity_from_shape_id(shape_id, shape_e);
+
+  return e;
+}
+
+} // namespace game2d

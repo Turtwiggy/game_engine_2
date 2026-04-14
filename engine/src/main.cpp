@@ -3,8 +3,6 @@
 // #include "box2d_parallel.hpp"
 #include "game_and_engine_interop.hpp"
 #include "imgui_helpers.hpp"
-#include "modules/camera/perspective_helpers.hpp"
-#include "modules/glm/glm_helpers.hpp"
 #include "modules/models/model_helpers.hpp"
 #include "modules/models_animations/model_animation_components.hpp"
 #include "modules/models_animations/model_animation_helpers.hpp"
@@ -14,9 +12,6 @@
 #include "modules/sdl/sdl_setup.hpp"
 #include "modules/sdl/sdl_shader.hpp"
 #include "threadsafe_queue.hpp"
-#include <glm/ext/matrix_float4x4.hpp>
-#include <glm/ext/matrix_transform.hpp>
-#include <glm/trigonometric.hpp>
 
 using namespace game2d;
 using namespace std::literals;
@@ -82,6 +77,10 @@ static std::atomic_bool running(true);
 static SDL_Window* window;
 static SDL_GPUDevice* device;
 
+static std::atomic_bool rebuild_dll(false);
+static std::atomic_bool rebuild_shaders(false);
+static Uint64 rebuild_took = 0;
+
 const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
   Uint64 dt_ns = now - past;
   dt_ns = std::min(dt_ns, Uint64(250 * 1e6)); // avoid spiral
@@ -100,21 +99,6 @@ GameThread()
     exit(SDL_APP_FAILURE);
   }
 
-  // physics innit
-  const auto logical_cpu_cores = SDL_GetNumLogicalCPUCores();
-  SDL_Log("LogicalCPUCores: %i", logical_cpu_cores);
-
-  // threads used (main, game, render)
-  // const int used_threads = 3;
-  // const int max_thread_count = std::max(1, logical_cpu_cores - used_threads);
-  // SDL_Log("%s", std::format("Giving box2d {} threads", max_thread_count).c_str());
-  // TODO: work out what this value should be
-  // int worker_count = 1;
-  // std::shared_ptr<Sample> s = std::make_shared<Sample>();
-  // s->m_scheduler.Initialize(worker_count);
-  // s->m_taskCount = 0;
-
-  //  game init after physics init
   game_code.game_init(&game_data);
 
   SDL_Log("(GameThread) -- done init");
@@ -128,6 +112,7 @@ GameThread()
     const Uint64 dt_ns = calc_dt_ns(now, game_past);
     const float dt = (float)(1e-9 * (float)dt_ns);
     game_data.dt = dt;
+    game_data.dt_ns = dt_ns;
 
     // update the game_data's ui data from the game_ui_data struct
     {
@@ -164,9 +149,6 @@ GameThread()
         if (game_code.valid)
           game_code.game_fixed_update(&game_data);
       }
-
-      // b2World_Step(game_data.world_id, physics_dt, physics_substep_count);
-      // s->m_taskCount = 0;
     }
 
     // GameUpdate()
@@ -198,7 +180,6 @@ GameThread()
         });
 
         // copy anything else in to renderdata buffer.
-        wb.camera_c = game_data.camera_c;
         wb.camera_pos = game_data.camera_pos;
         wb.ui_data = game_data.ui_data;
         wb.ui_data.game_dt = dt;
@@ -209,7 +190,7 @@ GameThread()
     FrameMark; // frame done
   }
 
-  b2DestroyWorld(game_data.world_id);
+  // b2DestroyWorld(game_data.world_id);
 };
 
 typedef struct SpriteInstance
@@ -261,11 +242,11 @@ CreateErrorPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input);
+  return create_2d_pipeline(device, window, vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
 };
 
 SDL_GPUGraphicsPipeline*
-CreateSpritePipeline()
+CreateSpritePipeline(const SDL_GPUSampleCount sample_count)
 {
   const ShaderInput vert_input{
     .shaderFilename = "PullSpriteBatch.vert",
@@ -281,10 +262,10 @@ CreateSpritePipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input);
+  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
 };
 SDL_GPUGraphicsPipeline*
-CreateSpriteNormalPipeline()
+CreateSpriteNormalPipeline(const SDL_GPUSampleCount sample_count)
 {
   const ShaderInput vert_input{
     .shaderFilename = "PullSpriteBatch.vert",
@@ -300,10 +281,10 @@ CreateSpriteNormalPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input);
+  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
 };
 SDL_GPUGraphicsPipeline*
-CreateLightingPipeline()
+CreateLightingPipeline(const SDL_GPUSampleCount sample_count)
 {
   const ShaderInput vert_input{
     .shaderFilename = "PullSpriteBatch.vert",
@@ -319,7 +300,7 @@ CreateLightingPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input);
+  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
 };
 SDL_GPUGraphicsPipeline*
 CreateModelPipeline(const SDL_GPUSampleCount sample_count)
@@ -389,18 +370,19 @@ RenderThread()
   static SINGLE_ModelsComponent models;
   static SINGLE_AnimatorComponent anims;
   {
-    models.model_0_data = load_model(device, "assets/models/wiggy_mech_2d4b.fbx"s);
-    anims.animation_0_data = load_animation(models.model_0_data);
+    models.model_0_data = load_model(device, "assets/models/wiggy_mech_2d4b.fbx");
+    // models.model_0_data = load_model(device, "assets/models/wiggy_mech_2d4b.fbx"s);
+    // anims.animation_0_data = load_animation(models.model_0_data);
     load_animations(anims, models);
   }
 
-  auto msaa = SDL_GPU_SAMPLECOUNT_1;
+  auto msaa = SDL_GPU_SAMPLECOUNT_4;
   // const auto viking_texture = create_and_upload_gpu_texture(device, "models/viking_room.png"s);
   const auto custom_texture_out = create_and_upload_gpu_texture(device, "textures/custom.png"s);
-  const auto custom_texture_normal_out = create_and_upload_gpu_texture(device, "textures/custom_normal.png"s);
-  auto* sprite_pipeline = CreateSpritePipeline();
-  auto* normal_pipeline = CreateSpriteNormalPipeline();
-  auto* lighting_pipeline = CreateLightingPipeline();
+  // const auto custom_texture_normal_out = create_and_upload_gpu_texture(device, "textures/custom_normal.png"s);
+  auto* sprite_pipeline = CreateSpritePipeline(msaa);
+  auto* normal_pipeline = CreateSpriteNormalPipeline(SDL_GPU_SAMPLECOUNT_1);
+  auto* lighting_pipeline = CreateLightingPipeline(SDL_GPU_SAMPLECOUNT_1);
   auto* error_pipeline = CreateErrorPipeline();
   auto* model_pipeline = CreateModelPipeline(msaa);
 
@@ -414,7 +396,14 @@ RenderThread()
   auto* bone_data_buffer = create_data_buffer<BoneData>(anims.amount_of_bones);
   assert(sizeof(BoneData) == sizeof(glm::mat4));
 
-  const auto create_render_texture = []() -> SDL_GPUTexture* {
+  Uint32 render_w = 0;
+  Uint32 render_h = 0;
+  // Uint32 render_w = 320;
+  // Uint32 render_h = 240;
+  render_w = (Uint32)(1.0f * window_w);
+  render_h = (Uint32)(1.0f * window_h);
+
+  const auto create_render_texture = [&]() -> SDL_GPUTexture* {
     // The contents of this texture are undefined until data is written to the texture,
     // either via SDL_UploadToGpuTexture, or by performaing a render or compute pass with
     // this texture as a target.
@@ -422,22 +411,20 @@ RenderThread()
       .type = SDL_GPU_TEXTURETYPE_2D,
       .format = SDL_GetGPUSwapchainTextureFormat(device, window),
       .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
-      .width = (Uint32)2.0f * window_w,
-      .height = (Uint32)2.0f * window_h,
+      .width = render_w,
+      .height = render_h,
       .layer_count_or_depth = 1,
       .num_levels = 1,
       .sample_count = SDL_GPU_SAMPLECOUNT_1,
     };
+
     SDL_GPUTexture* gpu_texture = SDL_CreateGPUTexture(device, &gpu_texture_info);
     if (gpu_texture == nullptr)
       throw SDLException("Unable to SDL_CreateGPUTexture()");
     return gpu_texture;
   };
-  auto* gpu_texture_a = create_render_texture();
-  auto* gpu_texture_b = create_render_texture();
-  auto* gpu_texture_c = create_render_texture();
 
-  auto create_msaa_texture = [](auto in_msaa) -> SDL_GPUTexture* {
+  const auto create_msaa_texture = [&](SDL_GPUSampleCount in_msaa) -> SDL_GPUTexture* {
     // The contents of this texture are undefined until data is written to the texture,
     // either via SDL_UploadToGpuTexture, or by performaing a render or compute pass with
     // this texture as a target.
@@ -445,8 +432,8 @@ RenderThread()
       .type = SDL_GPU_TEXTURETYPE_2D,
       .format = SDL_GetGPUSwapchainTextureFormat(device, window),
       .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
-      .width = (Uint32)2.0f * window_w,
-      .height = (Uint32)2.0f * window_h,
+      .width = render_w,
+      .height = render_h,
       .layer_count_or_depth = 1,
       .num_levels = 1,
       .sample_count = in_msaa,
@@ -460,8 +447,14 @@ RenderThread()
       throw SDLException("Unable to SDL_CreateGPUTexture()");
     return gpu_texture;
   };
-  auto* msaa_texture = create_msaa_texture(msaa);
-  auto* msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
+
+  auto* resolve_texture = create_render_texture();
+  auto* gpu_texture_a_msaa = create_msaa_texture(msaa);
+  auto* gpu_texture_b = create_render_texture();
+
+  // auto* gpu_texture_c = create_render_texture();
+  // auto* msaa_texture = create_msaa_texture(msaa);
+  // auto* msaa_depth_texture = create_depth_texture(device, render_w, render_h, msaa);
 
   SDL_Log("(RenderThread) -- done init");
   // SignalRenderThread(); // done init()
@@ -476,7 +469,7 @@ RenderThread()
     const Uint64 now = SDL_GetTicksNS();
     const Uint64 dt_ns = calc_dt_ns(now, renderer_past);
 
-    // handoff: game thread pusning data in to gameuidata
+    // handoff: game thread pushing data in to gameuidata
     // note: this doubles the memory because its duplicating RenderData
     auto& read_buffer = GetReadBuffer();
     {
@@ -486,11 +479,9 @@ RenderThread()
 
       game_ui_data.renderable = read_buffer.renderable; // take a copy
       game_ui_data.ui_data = read_buffer.ui_data;
-      game_ui_data.camera_c = read_buffer.camera_c;
       game_ui_data.camera_pos = read_buffer.camera_pos;
     }
     const auto& renderables = game_ui_data.renderable;
-    const auto& camera_c = game_ui_data.camera_c;
     const auto& camera_pos = game_ui_data.camera_pos;
 
     //
@@ -503,46 +494,50 @@ RenderThread()
     }
 
     // check if a key was pressed.
+    // {
+    //   ZoneScopedN("(RenderThread) events");
+    //   for (const auto& evt : events) {
+    //     if (evt.type == SDL_EVENT_WINDOW_RESIZED) {
+    //       SDL_Log("TODO: recreate render/depth textures");
+    // SDL_ReleaseGPUTexture(device, gpu_texture_a);
+    // SDL_ReleaseGPUTexture(device, gpu_texture_b);
+    // SDL_ReleaseGPUTexture(device, gpu_texture_c);
+    // SDL_ReleaseGPUTexture(device, msaa_depth_texture);
+    // SDL_GetWindowSize(window, &window_w, &window_h);
+    // msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
+    // gpu_texture_a = create_render_texture();
+    // gpu_texture_b = create_render_texture();
+    // gpu_texture_c = create_render_texture();
+    //     }
+    //   }
+    // }
+
+    // Rebuild pipelines & shaders
     {
-      ZoneScopedN("(RenderThread) events");
-      for (const auto& evt : events) {
-        if (evt.type == SDL_EVENT_KEY_DOWN) {
-          const auto scancode = evt.key.scancode;
+      auto wants_to_rebuild_shaders = std::find_if(events.begin(), events.end(), [](const SDL_Event& e) {
+                                        return e.type == SDL_EVENT_KEY_DOWN && e.key.scancode == SDL_SCANCODE_8;
+                                      }) != events.end();
+      wants_to_rebuild_shaders |= rebuild_shaders;
+      if (wants_to_rebuild_shaders) {
+        rebuild_shaders = false;
 
-          if (scancode == SDL_SCANCODE_8) {
-            SDL_Log("(RenderThread) wants to rebuild shaders...");
+        // releasing and recreate the fill pipeline (which uses the updated shaders)
+        SDL_ReleaseGPUGraphicsPipeline(device, model_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(device, normal_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(device, lighting_pipeline);
 
-            // releasing and recreate the fill pipeline (which uses the updated shaders)
-            SDL_ReleaseGPUGraphicsPipeline(device, model_pipeline);
-            SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
-            SDL_ReleaseGPUGraphicsPipeline(device, normal_pipeline);
-            SDL_ReleaseGPUGraphicsPipeline(device, lighting_pipeline);
-
-            auto result = RecompileShaders();
-            if (result != 0) {
-              model_pipeline = CreateErrorPipeline();
-              sprite_pipeline = CreateErrorPipeline();
-              normal_pipeline = CreateErrorPipeline();
-              lighting_pipeline = CreateErrorPipeline();
-            } else if (result == 0) {
-              model_pipeline = CreateModelPipeline(msaa);
-              sprite_pipeline = CreateSpritePipeline();
-              normal_pipeline = CreateSpriteNormalPipeline();
-              lighting_pipeline = CreateLightingPipeline();
-            }
-          }
-        }
-        if (evt.type == SDL_EVENT_WINDOW_RESIZED) {
-          SDL_Log("TODO: recreate render/depth textures");
-          // SDL_ReleaseGPUTexture(device, gpu_texture_a);
-          // SDL_ReleaseGPUTexture(device, gpu_texture_b);
-          // SDL_ReleaseGPUTexture(device, gpu_texture_c);
-          // SDL_ReleaseGPUTexture(device, msaa_depth_texture);
-          // SDL_GetWindowSize(window, &window_w, &window_h);
-          // msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
-          // gpu_texture_a = create_render_texture();
-          // gpu_texture_b = create_render_texture();
-          // gpu_texture_c = create_render_texture();
+        auto result = RecompileShaders();
+        if (result != 0) {
+          model_pipeline = CreateErrorPipeline();
+          sprite_pipeline = CreateErrorPipeline();
+          normal_pipeline = CreateErrorPipeline();
+          lighting_pipeline = CreateErrorPipeline();
+        } else if (result == 0) {
+          model_pipeline = CreateModelPipeline(msaa);
+          sprite_pipeline = CreateSpritePipeline(msaa);
+          normal_pipeline = CreateSpriteNormalPipeline(SDL_GPU_SAMPLECOUNT_1);
+          lighting_pipeline = CreateLightingPipeline(SDL_GPU_SAMPLECOUNT_1);
         }
       }
     }
@@ -554,7 +549,7 @@ RenderThread()
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
-    ImGui::ShowDemoWindow(NULL);
+    // ImGui::ShowDemoWindow(NULL);
 
     {
       ImGui::Begin("Debug");
@@ -573,42 +568,68 @@ RenderThread()
           msaa = SDL_GPU_SAMPLECOUNT_8;
 
         // recreate textures
-        SDL_ReleaseGPUTexture(device, msaa_texture);
-        SDL_ReleaseGPUTexture(device, msaa_depth_texture);
-        msaa_texture = create_msaa_texture(msaa);
-        msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
+        SDL_ReleaseGPUTexture(device, gpu_texture_a_msaa);
+        // SDL_ReleaseGPUTexture(device, msaa_depth_texture);
+        gpu_texture_a_msaa = create_msaa_texture(msaa);
+        // msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
 
         // recreate pipeline.
-        SDL_ReleaseGPUGraphicsPipeline(device, model_pipeline);
-        model_pipeline = CreateModelPipeline(msaa);
+        SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
+        sprite_pipeline = CreateSpritePipeline(msaa);
       }
 
-      ImGui::Text("anim: %f", anims.current_time);
-      if (ImGui::Button("StartAnim"))
-        anims.current_animation = &anims.animation_0_data;
-      if (ImGui::Button("StopAnim"))
-        anims.current_animation = nullptr;
+      // ImGui::Text("anim: %f", anims.current_time);
+      // if (ImGui::Button("StartAnim"))
+      //   anims.current_animation = &anims.animation_0_data;
+      // if (ImGui::Button("StopAnim"))
+      //   anims.current_animation = nullptr;
+
+      auto convert_msaa_to_str = [](SDL_GPUSampleCount msaa) -> const char* {
+        switch (msaa) {
+          case SDL_GPU_SAMPLECOUNT_1:
+            return "1x";
+          case SDL_GPU_SAMPLECOUNT_2:
+            return "2x";
+          case SDL_GPU_SAMPLECOUNT_4:
+            return "4x";
+          case SDL_GPU_SAMPLECOUNT_8:
+            return "8x";
+          default:
+            return "unknown";
+        }
+      };
+      ImGui::Text("Msaa: %s", convert_msaa_to_str(msaa));
+
+      if (rebuild_shaders)
+        ImGui::Text("Rebuilding Shaders...");
+      else if (ImGui::Button("Rebuild Shaders (8)"))
+        rebuild_shaders = true;
+
+      if (rebuild_dll)
+        ImGui::Text("Rebuilding DLL...");
+      else if (ImGui::Button("Rebuild DLL (9)"))
+        rebuild_dll = true;
 
       ImGui::End();
 
-      ImGui::Begin("GpuTextureA");
-      {
-        const auto wh = ImGui::GetContentRegionAvail();
-        ImGui::Image((ImTextureID)(intptr_t)gpu_texture_a, wh);
-      }
-      ImGui::End();
-      ImGui::Begin("GpuTextureB");
-      {
-        const auto wh = ImGui::GetContentRegionAvail();
-        ImGui::Image((ImTextureID)(intptr_t)gpu_texture_b, wh);
-      }
-      ImGui::End();
-      ImGui::Begin("GpuTextureC");
-      {
-        const auto wh = ImGui::GetContentRegionAvail();
-        ImGui::Image((ImTextureID)(intptr_t)gpu_texture_c, wh);
-      }
-      ImGui::End();
+      // ImGui::Begin("GpuTextureA");
+      // {
+      //   const auto wh = ImGui::GetContentRegionAvail();
+      //   ImGui::Image((ImTextureID)(intptr_t)gpu_texture_a_msaa, wh);
+      // }
+      // ImGui::End();
+      // ImGui::Begin("GpuTextureB");
+      // {
+      //   const auto wh = ImGui::GetContentRegionAvail();
+      //   ImGui::Image((ImTextureID)(intptr_t)gpu_texture_b, wh);
+      // }
+      // ImGui::End();
+      // ImGui::Begin("GpuTextureC");
+      // {
+      //   const auto wh = ImGui::GetContentRegionAvail();
+      //   ImGui::Image((ImTextureID)(intptr_t)gpu_texture_c, wh);
+      // }
+      // ImGui::End();
     }
 
     // Update game ui
@@ -626,11 +647,32 @@ RenderThread()
       const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
 
       const float dt = (float)(1e-9 * (float)dt_ns);
-      constexpr float M_PI = 3.141592653589;
+      const auto camera_pos = game_ui_data.camera_pos;
+
+      constexpr float M_PI = 3.141592653589f;
       const float aspect_ratio = (float)window_w / (float)window_h;
+
+      // float zoom = 1.0f; // >1 = zoom in, <1 = zoom out
+      // float half_w = (window_w / 2.0f) / zoom;
+      // float half_h = (window_h / 2.0f) / zoom;
+      // const auto proj_ortho_matrix = glm::ortho(-half_w, half_w, half_h, -half_w);
+
       const auto proj_ortho_matrix = glm::ortho(0.0f, (float)window_w, (float)window_h, 0.0f);
-      const auto view_matrix = glm::lookAt(glm::vec3{ 0.0f, 0.0f, 2.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
+      const auto view_matrix = glm::translate(glm::mat4(1.0f), -camera_pos);
+      const auto view_matrix_nopos = glm::identity<glm::mat4>();
+
       const auto vp_matrix = proj_ortho_matrix * view_matrix;
+      const auto vp_matrix_nopos = proj_ortho_matrix * view_matrix_nopos;
+
+      // const Matrix4x4 camera_view = Matrix4x4_CreateView(game_ui_data.camera_pos);
+      // const auto view_projection = camera_view * camera_proj;
+
+      // const auto persp_view = camera_c.view;
+      // const auto persp_proj = camera_c.projection;
+
+      // camera_c.view =
+      // persp_proj = glm::perspective(glm::radians(fov), aspect_ratio, near_clip, far_clip);
+      // camera_c.projection = calculate_perspective_projection(screen_size.x, screen_size.y);
 
       // this should probaby be in the game() loop
       update_animation(anims, dt);
@@ -762,6 +804,7 @@ RenderThread()
       }
 
       // Upload bone data matricies.
+      /*
       {
         const auto& final_bone_matrices = anims.final_bone_matrices;
         const auto matrices_size = final_bone_matrices.size();
@@ -792,18 +835,28 @@ RenderThread()
         }
         SDL_EndGPUCopyPass(copy_pass);
       }
+      */
+
+      SDL_GPUColorTargetInfo col_info_a = {
+        .mip_level = 0,
+        .layer_or_depth_plane = 0,
+        .clear_color = SDL_FColor{ 0.3f, 0.3f, 0.3f, 1.0f },
+        .load_op = SDL_GPU_LOADOP_CLEAR,
+        .store_op = SDL_GPU_STOREOP_STORE,
+        .cycle = false,
+      };
+
+      if (msaa != SDL_GPU_SAMPLECOUNT_1) {
+        col_info_a.texture = gpu_texture_a_msaa;
+        col_info_a.resolve_texture = resolve_texture; // resolve_texture must have sample_count of 1
+        col_info_a.store_op = SDL_GPU_STOREOP_RESOLVE;
+      } else {
+        col_info_a.texture = resolve_texture;
+        col_info_a.store_op = SDL_GPU_STOREOP_STORE;
+      }
 
       // render the sprites to a texture
       {
-        const SDL_GPUColorTargetInfo col_info_a = {
-          .texture = gpu_texture_a,
-          .mip_level = 0,
-          .layer_or_depth_plane = 0,
-          .clear_color = SDL_FColor{ 0.0f, 0.0f, 0.0f, 1.0f },
-          .load_op = SDL_GPU_LOADOP_CLEAR,
-          .store_op = SDL_GPU_STOREOP_STORE,
-          .cycle = false,
-        };
         SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(cmd_buf, &col_info_a, 1, NULL);
         {
           SDL_BindGPUGraphicsPipeline(render_pass, sprite_pipeline);
@@ -821,8 +874,9 @@ RenderThread()
       }
 
       // render the sprite normals to a texture
+      /*
       {
-        const SDL_GPUColorTargetInfo col_info_a = {
+        const SDL_GPUColorTargetInfo col_info = {
           .texture = gpu_texture_b,
           .mip_level = 0,
           .layer_or_depth_plane = 0,
@@ -846,8 +900,10 @@ RenderThread()
         }
         SDL_EndGPURenderPass(render_pass);
       }
+      */
 
       // render an animated model
+      /*
       {
         const SDL_GPUDepthStencilTargetInfo depth_info_c = {
           .texture = msaa_depth_texture,
@@ -857,7 +913,7 @@ RenderThread()
         SDL_GPUColorTargetInfo col_info_c{
           .mip_level = 0,
           .layer_or_depth_plane = 0,
-          .clear_color = SDL_FColor{ 0.3f, 0.3f, 0.3f, 1.0f },
+          .clear_color = SDL_FColor{ 1.0f, 0.3f, 0.3f, 1.0f },
           .load_op = SDL_GPU_LOADOP_CLEAR,
           .cycle = false,
         };
@@ -874,9 +930,6 @@ RenderThread()
         {
           SDL_BindGPUGraphicsPipeline(render_pass, model_pipeline);
           SDL_BindGPUVertexStorageBuffers(render_pass, 0, &bone_data_buffer, 1);
-
-          const auto persp_view = camera_c.view;
-          const auto persp_proj = camera_c.projection;
 
           glm::mat4 model_matrix(1.0f);
           // model_matrix = glm::scale(model_matrix, t.scale);
@@ -910,6 +963,7 @@ RenderThread()
         }
         SDL_EndGPURenderPass(render_pass);
       }
+      */
 
       // https://wiki.libsdl.org/SDL3/SDL_WaitAndAcquireGPUSwapchainTexture
       SDL_GPUTexture* swapchain_texture;
@@ -919,11 +973,10 @@ RenderThread()
         // This is mandatory: call Imgui_ImplSDLGPU3_PrepareDrawData() to upload the vertex/index buffer!
         ImGui_ImplSDLGPU3_PrepareDrawData(draw_data, cmd_buf);
 
-        //
         // Render the final output to the swapchain_texture
         //
         {
-          SDL_PushGPUVertexUniformData(cmd_buf, 0, &vp_matrix, sizeof(glm::mat4));
+          SDL_PushGPUVertexUniformData(cmd_buf, 0, &vp_matrix_nopos, sizeof(glm::mat4));
           SDL_PushGPUFragmentUniformData(cmd_buf, 0, &mouse_pos, sizeof(mouse_pos));
 
           const SDL_GPUColorTargetInfo col_info = {
@@ -941,8 +994,9 @@ RenderThread()
             SDL_BindGPUGraphicsPipeline(render_pass, lighting_pipeline);
             SDL_BindGPUVertexStorageBuffers(render_pass, 0, &quad_data_buffer, 1);
 
+            auto* tex = resolve_texture;
             const SDL_GPUTextureSamplerBinding fragment_samplers[2] = {
-              { .texture = gpu_texture_a, .sampler = renderer_info.samplers[0] },
+              { .texture = tex, .sampler = renderer_info.samplers[0] },
               { .texture = gpu_texture_b, .sampler = renderer_info.samplers[0] },
             };
             SDL_BindGPUFragmentSamplers(render_pass, 0, fragment_samplers, 2);
@@ -977,13 +1031,23 @@ RenderThread()
   SDL_Log("(RenderThread) shutting down...");
   cleanup_imgui(device);
   SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
-  SDL_ReleaseGPUTexture(device, gpu_texture_a);
-  SDL_ReleaseGPUTexture(device, gpu_texture_b);
-  SDL_ReleaseGPUTexture(device, gpu_texture_c);
-  SDL_ReleaseGPUTexture(device, msaa_texture);
-  SDL_ReleaseGPUTexture(device, msaa_depth_texture);
-  SDL_ReleaseGPUTexture(device, custom_texture_out.texture);
-  SDL_ReleaseGPUTexture(device, custom_texture_normal_out.texture);
+  SDL_ReleaseGPUGraphicsPipeline(device, normal_pipeline);
+  SDL_ReleaseGPUGraphicsPipeline(device, lighting_pipeline);
+  SDL_ReleaseGPUGraphicsPipeline(device, model_pipeline);
+  SDL_ReleaseGPUGraphicsPipeline(device, error_pipeline);
+
+  // SDL_ReleaseGPUTexture(device, custom_texture_out.texture);
+  // SDL_ReleaseGPUTexture(device, resolve_texture);
+  // SDL_ReleaseGPUTexture(device, gpu_texture_a_msaa);
+  // SDL_ReleaseGPUTexture(device, gpu_texture_b);
+
+  // SDL_ReleaseGPUSampler(device, renderer_info.samplers[0]);
+  // SDL_ReleaseGPUSampler(device, renderer_info.samplers[1]);
+  // SDL_ReleaseGPUSampler(device, renderer_info.samplers[2]);
+  // SDL_ReleaseGPUSampler(device, renderer_info.samplers[3]);
+  // SDL_ReleaseGPUSampler(device, renderer_info.samplers[4]);
+  // SDL_ReleaseGPUSampler(device, renderer_info.samplers[5]);
+
   // SDL_ReleaseGPUTexture(device, viking_texture.texture);
   SDL_ReleaseGPUTransferBuffer(device, sprite_data_transfer_buffer);
   SDL_ReleaseGPUTransferBuffer(device, quad_data_transfer_buffer);
@@ -1070,8 +1134,6 @@ main(int argc, char* argv[])
     const Uint64 dt_ns = calc_dt_ns(now, past);
     const Uint64 start_s = SDL_GetPerformanceCounter();
 
-    bool rebuild_dll = false;
-
     // SDL_PollEvent: MainThread
     static std::vector<SDL_Event> evts;
     evts.clear();
@@ -1109,8 +1171,11 @@ main(int argc, char* argv[])
 
     // Rebuild the dll
     if (rebuild_dll) {
+      rebuild_dll = false;
       game_code.valid = false;
       SDL_Log("Rebuild dll...");
+
+      auto now = SDL_GetTicks();
 
       // rebuild_dll
       const auto build_script = "rebuild_dll.bat";
@@ -1122,10 +1187,16 @@ main(int argc, char* argv[])
         SDL_Log("Build failed...");
       }
 
+      auto after = SDL_GetTicks();
+      rebuild_took = after - now;
+      SDL_Log("Build took %zu ms", after - now);
+
       if (result == 0) {
         SDL_Log("Build success...");
         sdl_unload_game_code(&game_code);
         sdl_load_game_code(game_code, src_dll, dst_dll);
+        game_code.rebuilt = true;
+        SDL_Log("Load DLL... (rebuilt=>true)");
       }
     }
 

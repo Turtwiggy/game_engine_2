@@ -25,6 +25,8 @@ get_parent_entity_from_shape_id(entt::registry& r, const b2ShapeId id);
 std::vector<b2ShapeId>
 get_shapes(b2BodyId id);
 
+constexpr float PIXELS_PER_METER = 50;
+
 float
 meters_to_pixels(float meters);
 vec2

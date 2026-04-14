@@ -241,7 +241,11 @@ create_and_upload_gpu_texture(SDL_GPUDevice* device, const std::string path)
 };
 
 SDL_GPUGraphicsPipeline*
-create_2d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput& vert, const ShaderInput& frag)
+create_2d_pipeline(SDL_GPUDevice* device,
+                   SDL_Window* window,
+                   const ShaderInput& vert,
+                   const ShaderInput& frag,
+                   const SDL_GPUSampleCount sample_count)
 {
   SDL_GPUShader* vert_shader = nullptr;
   SDL_GPUShader* frag_shader = nullptr;
@@ -277,14 +281,18 @@ create_2d_pipeline(SDL_GPUDevice* device, SDL_Window* window, const ShaderInput&
     .vertex_shader = vert_shader,
     .fragment_shader = frag_shader,
     .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+    .multisample_state = {
+      .sample_count = sample_count,
+    },
     .depth_stencil_state = {
         .compare_op = SDL_GPU_COMPAREOP_LESS,
         .enable_depth_test = true,
         .enable_depth_write = true,
     },
+
     .target_info = { .color_target_descriptions = color_target_desc.data(),
                      .num_color_targets = (Uint32)color_target_desc.size(),
-                    },
+                    }
   };
 
   // pipeline_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_LINE;

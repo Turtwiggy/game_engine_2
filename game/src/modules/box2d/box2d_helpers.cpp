@@ -47,8 +47,6 @@ get_shapes(b2BodyId id)
   return ids;
 };
 
-constexpr float PIXELS_PER_METER = 50;
-
 float
 meters_to_pixels(float meters)
 {

@@ -26,11 +26,12 @@ float4 main(Input input) : SV_Target0
     float2 v_uv = input.TexCoord;
 
     float2 sprite_uv = float2(
-        (v_sprite_wh.x * v_uv.x) / v_sprite_max.x + v_sprite_pos.x * (1.0f/v_sprite_max.x),
-        (v_sprite_wh.y * v_uv.y) / v_sprite_max.y + v_sprite_pos.y * (1.0f/v_sprite_max.y)
+    (v_sprite_wh.x * v_uv.x) / v_sprite_max.x + v_sprite_pos.x * (1.0f/v_sprite_max.x),
+    (v_sprite_wh.y * v_uv.y) / v_sprite_max.y + v_sprite_pos.y * (1.0f/v_sprite_max.y)
     );
     
     // float4 sprite_col = SpriteTexture.Sample(SpriteSampler, v_uv);
-    float4 sprite_col = input.Color * SpriteTexture.Sample(SpriteSampler, sprite_uv);
+    float4 sprite_col = input.Color;
+    //  * SpriteTexture.Sample(SpriteSampler, sprite_uv);
     return sprite_col;
 }

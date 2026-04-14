@@ -2,22 +2,22 @@
 
 #include "game.hpp"
 
-#include "actors/actor_player/actor_player_components.hpp"
 #include "game_and_engine_interop.hpp"
+#include "modules/actors/actor_player/actor_player_components.hpp"
 #include "modules/box2d/box2d_components.hpp"
 #include "modules/box2d/box2d_helpers.hpp"
-#include "modules/camera/camera_helpers.hpp"
 #include "modules/camera/perspective_helpers.hpp"
 #include "modules/entt/entt_helpers.hpp"
+#include "modules/events/events_core/events_components.hpp"
 #include "modules/input/input_helpers.hpp"
-#include "modules/maths/helpers.hpp"
-#include "render_helpers.hpp"
-#include "systems/system_events/events_components.hpp"
+#include "modules/physics/box2d_parallel.hpp"
+#include "modules/physics/physics_components.hpp"
+#include "modules/physics/physics_system.hpp"
+#include "modules/physics/render_helpers.hpp"
+#include "modules/raws/raws_components.hpp"
 #include "systems/system_items/items_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_system.hpp"
-#include <SDL3/SDL_events.h>
-#include <SDL3/SDL_mouse.h>
 
 namespace game2d {
 
@@ -26,7 +26,7 @@ static bool refreshed = false;
 const auto screen_size = vec2(1280, 720); // todo: fix this
 
 static bool capture_mouse = false;
-static float camera_speed = 10.0f;
+static float camera_speed = 500.0f;
 static float mouse_sens = 0.01f;
 
 static float stuff_size = 32.0f;
@@ -40,6 +40,8 @@ static bool jump = false;
 static bool pickup = false;
 const auto jump_force = b2Vec2{ 0.0f, -5.0f };
 const auto move_force = 0.25f;
+
+// Physics
 static b2Vec2 gravity = { 0.0f, 0.0f };
 
 const auto get_system_time_for_seed = []() -> int {
@@ -48,147 +50,10 @@ const auto get_system_time_for_seed = []() -> int {
   return seed;
 };
 
-SpriteComponent
-default_sprite()
-{
-  const SpriteComponent s{
-    .sprite_max_x = 32.0f,
-    .sprite_max_y = 32.0f,
-    .sprite_pos_x = 0.0f,
-    .sprite_pos_y = 0.0f,
-    .sprite_wh_x = 1.0f,
-    .sprite_wh_y = 1.0f,
-  };
-  return s;
-}
-
-entt::entity
-spawn(GameData* data,
-      const vec2 pos,
-      const vec2 size,
-      const ColourComponent colour,
-      const bool is_static = false,
-      const bool is_sensor = false)
-{
-  auto& r = internal_r;
-
-  b2Vec2 size_meters = pixels_to_meters(size);
-  b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
-
-  b2BodyDef bodyDef = b2DefaultBodyDef();
-  bodyDef.type = is_static ? b2_staticBody : b2_dynamicBody;
-  bodyDef.position = b2Vec2{ pixels_to_meters(pos) };
-  bodyDef.fixedRotation = true;
-  b2BodyId body_id = b2CreateBody(data->world_id, &bodyDef);
-
-  b2Body_SetLinearDamping(body_id, 5.0f);
-
-  b2ShapeDef shapeDef = b2DefaultShapeDef();
-  shapeDef.isSensor = is_sensor;
-  shapeDef.enableContactEvents = true;
-  shapeDef.enableSensorEvents = true;
-  b2ShapeId shape_id = b2CreatePolygonShape(body_id, &shapeDef, &box);
-
-  TransformComponent t_c;
-  auto pos_2d = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
-  auto size_2d = meters_to_pixels(size_meters);
-  t_c.pos = vec3{ pos_2d.x, pos_2d.y, 0.0f };
-  t_c.size = vec3{ size_2d.x, size_2d.y, 0.0f };
-
-  // float rnd_r = random(rnd, 0.0f, 1.0f);
-  // float rnd_g = random(rnd, 0.0f, 1.0f);
-  // float rnd_b = random(rnd, 0.0f, 1.0f);
-
-  entt::entity e = r.create();
-  r.emplace<TransformComponent>(e, t_c);
-  r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
-  r.emplace<SpriteComponent>(e, default_sprite());
-  r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ .id = body_id, .shape_ids = { shape_id } });
-  set_entity_from_body_id(body_id, e);
-
-  entt::entity shape_e = r.create();
-  r.emplace<PhysicsShapeComponent>(shape_e, PhysicsShapeComponent{ .body_id = body_id, .shape_id = shape_id });
-  set_entity_from_shape_id(shape_id, shape_e);
-
-  return e;
-};
-
-void
-handle_on_coll_enter__check_for_gameover(entt::registry& r, const OnCollisionEnter& evt)
-{
-  const auto parent_a_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_a).body_id);
-  const auto parent_b_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_b).body_id);
-  const auto [shape_a, shape_b] = coll<const PlayerComponent, const ContainerReceiverComponent>(r, parent_a_e, parent_b_e);
-
-  if (shape_a == entt::null || shape_b == entt::null)
-    return; // not a coll of interest
-
-  const auto& consumer_inv = r.get<const InventoryComponent>(parent_b_e);
-  SDL_Log("consumer has: %i items", consumer_inv.items);
-
-  const bool gameover = consumer_inv.items >= 5;
-  if (gameover) {
-    SDL_Log("dingding! gameover");
-    create_empty<Request_GameOver>(r);
-  }
-}
-
-void
-handle_on_coll_enter__log(entt::registry& r, const OnCollisionEnter& evt)
-{
-  const auto parent_a_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_a).body_id);
-  const auto parent_b_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_b).body_id);
-
-  // SDL_Log("collision enter. s_eid: %i par_eid: %i, s_eid: %i, par_eid: %i ",
-  //         (uint32_t)evt.shape_a,
-  //         parent_a_e,
-  //         (uint32_t)evt.shape_b,
-  //         parent_b_e);
-
-  {
-    const auto [shape_a, shape_b] = coll<const PlayerComponent, const ContainerProviderComponent>(r, parent_a_e, parent_b_e);
-    if (shape_a != entt::null && shape_b != entt::null) {
-      SDL_Log("collision enter with provider.");
-
-      auto& provider_inv = r.get<InventoryComponent>(parent_b_e);
-      if (provider_inv.items <= 0)
-        return; // no more items to give
-      provider_inv.items--;
-
-      auto& player_inv = r.get<InventoryComponent>(parent_a_e);
-      player_inv.items++;
-    }
-  }
-
-  {
-    const auto [shape_a, shape_b] = coll<const PlayerComponent, const ContainerReceiverComponent>(r, parent_a_e, parent_b_e);
-    if (shape_a != entt::null && shape_b != entt::null) {
-      SDL_Log("collision enter with reciever.");
-
-      auto& player_inv = r.get<InventoryComponent>(parent_a_e);
-      if (player_inv.items <= 0)
-        return; // no item on player
-      player_inv.items--;
-
-      auto& consumer_inv = r.get<InventoryComponent>(parent_b_e);
-      consumer_inv.items++;
-
-      // check for gameover
-      handle_on_coll_enter__check_for_gameover(r, evt);
-    }
-  }
-}
-
-void
-handle_on_coll_exit__log(entt::registry& r, const OnCollisionExit& coll_evt)
-{
-  SDL_Log("collision exit.");
-}
-
 void
 game_init(GameData* data)
 {
-  SDL_Log("(GameEngine) Init()");
+  SDL_Log("(Game) Init()");
 
   // sets as an instance of an entt::registry used by this dll
   data->r = &internal_r;
@@ -197,24 +62,17 @@ game_init(GameData* data)
   auto& camera_pos = data->camera_pos;
   camera_pos = { -7.5, 3.2, -4.45 };
 
-  auto& camera_c = data->camera_c;
-  camera_c.projection = calculate_perspective_projection(screen_size.x, screen_size.y);
-  camera_c.pitch = 0.24f;
-  camera_c.yaw = 2.19;
-
   {
     const auto& view = r.view<const TransformComponent, const ColourComponent, const SpriteComponent>();
     SDL_Log("renderables: %zu", view.size_hint());
   }
 
-  b2WorldDef world_def = b2DefaultWorldDef();
-  // world_def.workerCount = worker_count;
-  // world_def.enqueueTask = EnqueueTask;
-  // world_def.finishTask = FinishTask;
-  // world_def.userTaskContext = s.get();
-  world_def.gravity = gravity;
-  world_def.enableSleep = true;
-  data->world_id = b2CreateWorld(&world_def);
+  // create physics world
+  SINGLE_Physics physics_c;
+  physics_c.worldId = emplace_or_replace_physics_world();
+  r.ctx().emplace<SINGLE_Physics>(physics_c);
+  // create_empty<SINGLE_Physics>(r, physics_c);
+  // r.emplace<Persistent>(get_first<SINGLE_Physics>(r));
 
   // spawn(data, { 1280 * 0.5f, 720 * 0.75f }, { 1000, 50 }, true); // static
 
@@ -229,24 +87,18 @@ game_init(GameData* data)
   for (int i = 0; i < 100; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
     const auto rnd_y = random(rnd, 0.0f, 720.0f);
-    const auto consumer_e = spawn(data, { rnd_x, rnd_y }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f });
+    const auto consumer_e = spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f });
     r.emplace<ContainerReceiverComponent>(consumer_e);
     r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
   }
 
-  const auto provider_e = spawn(data, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f });
+  const auto provider_e = spawn(r, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f });
   r.emplace<ContainerProviderComponent>(provider_e);
   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto player_e = spawn(data, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, true);
+  const auto player_e = spawn(r, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, true);
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
-
-  // setup events
-  auto& evts_c = SINGLE_Events::get();
-  evts_c.dispatcher.sink<OnCollisionEnter>().connect<&handle_on_coll_enter__log>(r);
-  evts_c.dispatcher.sink<OnCollisionExit>().connect<&handle_on_coll_exit__log>(r);
-  evts_c.dispatcher.sink<OnCollisionEnter>().connect<&handle_on_coll_enter__check_for_gameover>(r);
 };
 
 void
@@ -292,64 +144,11 @@ game_fixed_update(GameData* data)
     }
   }
 
-  // update world
-  {
-    constexpr int physics_substep_count = 4;
-    constexpr float physics_dt = 1.0f / 60.0f;
-    b2World_Step(data->world_id, physics_dt, physics_substep_count);
-  }
+  const uint64_t ms_dt = data->dt_ns / 1000;
+  update_physics_system(data, r, ms_dt);
 
-  // Generate contact events.
-  {
-    const auto convert_box2d_coll_to_entt = [](entt::registry& r, const b2ShapeId a, const b2ShapeId b, auto callback) {
-      const auto shape_eid_a = (entt::entity)(reinterpret_cast<uintptr_t>(b2Shape_GetUserData(a)));
-      const auto shape_eid_b = (entt::entity)(reinterpret_cast<uintptr_t>(b2Shape_GetUserData(b)));
-
-      assert(shape_eid_a != entt::null);
-      assert(shape_eid_a != entt::null);
-      callback(shape_eid_a, shape_eid_b);
-    };
-
-    const b2ContactEvents c_events = b2World_GetContactEvents(data->world_id);
-    const b2SensorEvents s_events = b2World_GetSensorEvents(data->world_id);
-    auto& ui_data = data->ui_data;
-    ui_data.n_sensor_events = s_events.beginCount + s_events.endCount;
-    ui_data.n_contact_events = c_events.beginCount + c_events.endCount;
-
-    for (int i = 0; i < c_events.beginCount; ++i) {
-      b2ContactBeginTouchEvent* beginEvent = c_events.beginEvents + i;
-      const auto callback = [](const entt::entity e_a, const entt::entity e_b) {
-        SINGLE_Events::get().dispatcher.trigger(OnCollisionEnter{ .shape_a = e_a, .shape_b = e_b });
-      };
-      convert_box2d_coll_to_entt(r, beginEvent->shapeIdA, beginEvent->shapeIdB, callback);
-    }
-    for (int i = 0; i < c_events.endCount; ++i) {
-      b2ContactEndTouchEvent* endEvent = c_events.endEvents + i;
-      if (b2Shape_IsValid(endEvent->shapeIdA) && b2Shape_IsValid(endEvent->shapeIdB)) {
-        const auto callback = [](const entt::entity e_a, const entt::entity e_b) {
-          SINGLE_Events::get().dispatcher.trigger(OnCollisionExit{ .shape_a = e_a, .shape_b = e_b });
-        };
-        convert_box2d_coll_to_entt(r, endEvent->shapeIdA, endEvent->shapeIdB, callback);
-      }
-    }
-    for (int i = 0; i < s_events.beginCount; ++i) {
-      b2SensorBeginTouchEvent* beginEvent = s_events.beginEvents + i;
-      const auto callback = [](const entt::entity e_a, const entt::entity e_b) {
-        SINGLE_Events::get().dispatcher.trigger(OnCollisionEnter{ .shape_a = e_a, .shape_b = e_b });
-      };
-      convert_box2d_coll_to_entt(r, beginEvent->sensorShapeId, beginEvent->visitorShapeId, callback);
-    }
-    for (int i = 0; i < s_events.endCount; ++i) {
-      b2SensorEndTouchEvent* endEvent = s_events.endEvents + i;
-      if (b2Shape_IsValid(endEvent->sensorShapeId) && b2Shape_IsValid(endEvent->visitorShapeId)) {
-        const auto callback = [](const auto e_a, const auto e_b) {
-          SINGLE_Events::get().dispatcher.trigger(OnCollisionExit{ .shape_a = e_a, .shape_b = e_b });
-        };
-        convert_box2d_coll_to_entt(r, endEvent->sensorShapeId, endEvent->visitorShapeId, callback);
-      }
-    }
-    SINGLE_Events::get().dispatcher.update();
-  }
+  // Update transforms via physics body.
+  update_transforms_from_physics(r);
 };
 
 void
@@ -374,58 +173,43 @@ game_update(GameData* data)
     create_empty<Request_GameOver>(r);
 
   /*
-if (get_key_down(inputs_c, SDL_SCANCODE_W))
+  if (get_key_down(inputs_c, SDL_SCANCODE_W))
   keyboard_l.y = -1;
-if (get_key_down(inputs_c, SDL_SCANCODE_S))
+  if (get_key_down(inputs_c, SDL_SCANCODE_S))
   keyboard_l.y = 1;
-if (get_key_down(inputs_c, SDL_SCANCODE_A))
+  if (get_key_down(inputs_c, SDL_SCANCODE_A))
   keyboard_l.x = -1;
-if (get_key_down(inputs_c, SDL_SCANCODE_D))
+  if (get_key_down(inputs_c, SDL_SCANCODE_D))
   keyboard_l.x = 1;
-if (get_key_down(inputs_c, SDL_SCANCODE_UP))
+  if (get_key_down(inputs_c, SDL_SCANCODE_UP))
   keyboard_r.y = -1;
-if (get_key_down(inputs_c, SDL_SCANCODE_DOWN))
+  if (get_key_down(inputs_c, SDL_SCANCODE_DOWN))
   keyboard_r.y = 1;
-if (get_key_down(inputs_c, SDL_SCANCODE_LEFT))
+  if (get_key_down(inputs_c, SDL_SCANCODE_LEFT))
   keyboard_r.x = -1;
-if (get_key_down(inputs_c, SDL_SCANCODE_RIGHT))
+  if (get_key_down(inputs_c, SDL_SCANCODE_RIGHT))
   keyboard_r.x = 1;
-if (get_key_up(inputs_c, SDL_SCANCODE_W))
+  if (get_key_up(inputs_c, SDL_SCANCODE_W))
   keyboard_l.y = 0;
-if (get_key_up(inputs_c, SDL_SCANCODE_S))
+  if (get_key_up(inputs_c, SDL_SCANCODE_S))
   keyboard_l.y = 0;
-if (get_key_up(inputs_c, SDL_SCANCODE_A))
+  if (get_key_up(inputs_c, SDL_SCANCODE_A))
   keyboard_l.x = 0;
-if (get_key_up(inputs_c, SDL_SCANCODE_D))
+  if (get_key_up(inputs_c, SDL_SCANCODE_D))
   keyboard_l.x = 0;
-if (get_key_up(inputs_c, SDL_SCANCODE_UP))
+  if (get_key_up(inputs_c, SDL_SCANCODE_UP))
   keyboard_r.y = 0;
-if (get_key_up(inputs_c, SDL_SCANCODE_DOWN))
+  if (get_key_up(inputs_c, SDL_SCANCODE_DOWN))
   keyboard_r.y = 0;
-if (get_key_up(inputs_c, SDL_SCANCODE_LEFT))
+  if (get_key_up(inputs_c, SDL_SCANCODE_LEFT))
   keyboard_r.x = 0;
-if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
+  if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
   keyboard_r.x = 0;
-*/
+  */
 
   data->mouse_dt = vec2{ 0, 0 };
 
   for (const SDL_Event& evt : evts) {
-    if (evt.type == SDL_EVENT_KEY_DOWN) {
-      const auto scancode = evt.key.scancode;
-      const auto scancode_name = SDL_GetScancodeName(scancode);
-      const auto down = evt.key.down;
-      const auto repeat = evt.key.repeat;
-      SDL_Log("(GameThread)(GameUpdate) KeyDown %s %i %i", scancode_name, down, repeat);
-    }
-    if (evt.type == SDL_EVENT_KEY_UP) {
-      const SDL_KeyboardEvent& k_evt = evt.key;
-      const auto scancode = k_evt.scancode;
-      const auto scancode_name = SDL_GetScancodeName(scancode);
-      const auto down = k_evt.down;
-      const auto repeat = evt.key.repeat;
-      SDL_Log("(GameThread)(GameUpdate) KeyUp %s %i %i", scancode_name, down, repeat);
-    }
 
     //
     // mouse events
@@ -448,38 +232,24 @@ if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
         }
       }
 
-      if (m_evt.button == SDL_BUTTON_RIGHT) {
-        spawn(data, data->mouse_pos, { stuff_size, stuff_size }, { 1.0, 1.0, 1.0 });
-      }
+      if (m_evt.button == SDL_BUTTON_RIGHT)
+        spawn(r, data->mouse_pos, { stuff_size, stuff_size }, { 1.0, 1.0, 1.0 });
     }
     if (evt.type == SDL_EVENT_MOUSE_MOTION) {
       SDL_MouseMotionEvent m_evt = evt.motion;
       // data->mouse_pos = { m_evt.x, m_evt.y };
       data->mouse_dt = { m_evt.xrel, m_evt.yrel };
     }
-    // SDL_Log("mouse_dt: (%f, %f)", data->mouse_dt.x, data->mouse_dt.y);
 
-    //
     // joysticks
     //
     if (evt.type == SDL_EVENT_JOYSTICK_ADDED) {
       auto joystick_id = evt.jdevice.which;
       SDL_Log("Joystick Added: %i", joystick_id);
-
-      // open as gamepad?
-      if (SDL_IsGamepad(joystick_id)) {
-        SDL_Log("tried to add as gamepad.");
-        SDL_Gamepad* gamepad = SDL_OpenGamepad(joystick_id);
-        if (gamepad)
-          SDL_Log("gamepad: success?");
-        else
-          SDL_Log("gamepad: fail?");
-      }
     }
     if (evt.type == SDL_EVENT_JOYSTICK_REMOVED) {
       auto joystick_id = evt.jdevice.which;
       SDL_Log("Joystick Removed: %i", joystick_id);
-      // TODO: remove from some list or other
     }
     if (evt.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN) {
       SDL_Log("Joystick button down");
@@ -490,11 +260,18 @@ if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
   }
 
   auto& ui_data = data->ui_data;
+
+  /*
+
   // ui_data.keyboard_l = keyboard_l;
   // ui_data.keyboard_r = keyboard_r;
 
+  /*
   int n_joysticks = 0;
   auto* joysticks = SDL_GetJoysticks(&n_joysticks);
+  {
+    // SDL_free(joysticks);
+  }
   ui_data.n_controllers = n_joysticks;
   ui_data.controller_l = { 0, 0 };
   ui_data.controller_r = { 0, 0 };
@@ -552,6 +329,9 @@ if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
     break;
   }
 
+  SDL_free(joysticks);
+  */
+
   // l_input = keyboard_l + controller_l;
   // r_input = keyboard_r + controller_r;
 
@@ -578,64 +358,76 @@ if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
   // camera_pos = camera_pos + data->dt * camera_speed * r_input;
   // data->camera_pos = camera_pos;
 
+  /*
   auto& camera_c = data->camera_c;
   auto& camera_pos = data->camera_pos;
 
-  if (capture_mouse) {
-    auto mouse_input = data->mouse_dt;
-    const float mouse_input_x = mouse_input.x * mouse_sens;
-    camera_c.yaw += mouse_input_x;
-    const float mouse_input_y = mouse_input.y * mouse_sens;
-    camera_c.pitch += mouse_input_y;
-    if (camera_c.pitch > 89.0f)
-      camera_c.pitch = 89.0f;
-    if (camera_c.pitch < -89.0f)
-      camera_c.pitch = -89.0f;
-  }
+  // if (capture_mouse) {
+  //   auto mouse_input = data->mouse_dt;
+  //   const float mouse_input_x = mouse_input.x * mouse_sens;
+  //   camera_c.yaw += mouse_input_x;
+  //   const float mouse_input_y = mouse_input.y * mouse_sens;
+  //   camera_c.pitch += mouse_input_y;
+  //   if (camera_c.pitch > 89.0f)
+  //     camera_c.pitch = 89.0f;
+  //   if (camera_c.pitch < -89.0f)
+  //     camera_c.pitch = -89.0f;
+  // }
 
   // // const auto fwd_dir = glm::rotate(vec3_to_quat(t.rotation), forward);
   // const auto fwd_dir = forward;
 
   // update camera pos with wasd
   const float velocity = camera_speed * dt;
-  if (get_key_held(inputs_c, SDL_SCANCODE_W))
-    camera_pos += get_forward_dir(camera_c) * velocity;
-  if (get_key_held(inputs_c, SDL_SCANCODE_S))
-    camera_pos -= get_forward_dir(camera_c) * velocity;
-  if (get_key_held(inputs_c, SDL_SCANCODE_A))
-    camera_pos -= get_right_dir(camera_c) * velocity;
-  if (get_key_held(inputs_c, SDL_SCANCODE_D))
-    camera_pos += get_right_dir(camera_c) * velocity;
-  if (get_key_held(inputs_c, SDL_SCANCODE_SPACE))
-    camera_pos += get_up_dir(camera_c) * velocity;
-  if (get_key_held(inputs_c, SDL_SCANCODE_LSHIFT))
-    camera_pos -= get_up_dir(camera_c) * velocity;
-  if (get_key_down(inputs_c, SDL_SCANCODE_M)) {
-    capture_mouse = !capture_mouse;
-    // SDL_CaptureMouse(capture_mouse);
-    // if (SDL_CursorVisible() && capture_mouse)
-    //   SDL_HideCursor();
-    // else
-    //   SDL_ShowCursor();
-    SDL_Log("capture mouse: %i", capture_mouse);
-  }
+
+  // 3d camera
+  // if (get_key_held(inputs_c, SDL_SCANCODE_W))
+  //   camera_pos += get_forward_dir(camera_c) * velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_S))
+  //   camera_pos -= get_forward_dir(camera_c) * velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_A))
+  //   camera_pos -= get_right_dir(camera_c) * velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_D))
+  //   camera_pos += get_right_dir(camera_c) * velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_SPACE))
+  //   camera_pos += get_up_dir(camera_c) * velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_LSHIFT))
+  //   camera_pos -= get_up_dir(camera_c) * velocity;
+
+  // 2d camera
+  // if (get_key_held(inputs_c, SDL_SCANCODE_UP))
+  //   camera_pos.y -= velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_DOWN))
+  //   camera_pos.y += velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_LEFT))
+  //   camera_pos.x -= velocity;
+  // if (get_key_held(inputs_c, SDL_SCANCODE_RIGHT))
+  //   camera_pos.x += velocity;
+
+  // if (get_key_down(inputs_c, SDL_SCANCODE_M)) {
+  //   capture_mouse = !capture_mouse;
+  //   // SDL_CaptureMouse(capture_mouse);
+  //   // if (SDL_CursorVisible() && capture_mouse)
+  //   //   SDL_HideCursor();
+  //   // else
+  //   //   SDL_ShowCursor();
+  //   SDL_Log("capture mouse: %i", capture_mouse);
+  // }
 
   camera_c.view =
     calculate_perspective_view(TransformComponent{ .pos = { camera_pos.x, camera_pos.y, camera_pos.z } }, camera_c);
 
-  // Update transforms via physics body.
-  update_transforms_from_physics(r);
 
   // update_events_system()
-  SINGLE_Events::get().dispatcher.update();
+  // SINGLE_Events::get().dispatcher.update();
 
   // check what you're colliding with.
   // if it's a producer: you gain 1 item.
   // if it's a consumer, you lose 1 item.
-  if (jump) {
-    // TODO
-    // b2Shape_TestPoint(b2ShapeId shapeId, b2Vec2 point)
-  }
+  // if (jump) {
+  // TODO
+  // b2Shape_TestPoint(b2ShapeId shapeId, b2Vec2 point)
+  // }
 
   //
   // systems
@@ -650,17 +442,16 @@ if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
     game_refresh(data);
     game_init(data);
   }
+  */
 
   // populate game's copy of ui data from the gamethread
   {
     auto& hmm = ui_data.hmm;
     hmm.clear(); // .clear() is bad
-    // const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
-    // for (const auto& [e, t_c, col_c, inv_c] : view.each())
-    //   hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c });
-
-    ui_data.play_again = false;
-    ui_data.game_over = gameover;
+    //   // const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
+    //   // for (const auto& [e, t_c, col_c, inv_c] : view.each())
+    //   //   hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c
+    //   }); ui_data.play_again = false; ui_data.game_over = gameover;
   }
 };
 
@@ -691,7 +482,7 @@ game_update_ui(GameUIData* ui_data)
     ImGui::Text("renderables: %i", (int)ui_data->renderable.size());
     ImGui::Text("ui data hmm: %i", (int)ui_data->ui_data.hmm.size());
     ImGui::Text("camera_pos: %0.2f, %0.2f, %0.2f", ui_data->camera_pos.x, ui_data->camera_pos.y, ui_data->camera_pos.z);
-    ImGui::Text("camera (pitch) %0.2f, (yaw) %0.2f", ui_data->camera_c.pitch, ui_data->camera_c.yaw);
+    // ImGui::Text("camera (pitch) %0.2f, (yaw) %0.2f", ui_data->camera_c.pitch, ui_data->camera_c.yaw);
 
     ImGui::End();
   }
@@ -765,20 +556,11 @@ game_update_ui(GameUIData* ui_data)
 void
 game_refresh(GameData* data)
 {
-  SDL_Log("(GameEngine) game_refresh()");
+  SDL_Log("(Game) game_refresh()");
   refreshed = true;
 
   // clear the registry
   internal_r.clear();
-
-  // Delete the physics world. Create another one.
-  b2DestroyWorld(data->world_id);
-  data->world_id = {};
-
-  // deletes all the physicsbody
-  // auto& r = *data->r;
-  // auto view = r.view<PhysicsBodyComponent>();
-  // view.each([&r](const auto e, const auto& pb_c) { r.destroy(e); });
 };
 
 } // namespace game2d
