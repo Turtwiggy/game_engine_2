@@ -102,7 +102,6 @@ sdl_load_game_code(sdl_game_code& result, const std::string src_dll_name, const 
 
   SDL_Log("Load DLL... success");
   result.valid = true;
-  result.rebuilt = false;
 };
 
 void

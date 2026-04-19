@@ -5,23 +5,20 @@
 #include "box2d_parallel.hpp"
 #include "modules/box2d/box2d_components.hpp"
 #include "modules/events/events_core/events_components.hpp"
-#include "modules/physics/physics_system.hpp"
 #include "physics_components.hpp"
 
 namespace game2d {
 
 void
-update_physics_system(GameData* data, entt::registry& r, const uint64_t ms_dt)
+update_physics_system(GameData* data, entt::registry& r, const float dt)
 {
-  auto physics_c = r.ctx().get<SINGLE_Physics>();
-  auto world_id = physics_c.worldId;
+  const auto world_id = SINGLE_Physics::get().worldId;
   auto& events_c = SINGLE_Events::get();
 
   // update world
   {
-    const auto dt = ms_dt / 1000.0f;
     const int substep_count = 4;
-    b2World_Step(physics_c.worldId, dt, substep_count);
+    b2World_Step(world_id, dt, substep_count);
     physics_reset_task_count();
   }
 

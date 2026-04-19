@@ -9,4 +9,10 @@ random(RandomState& rnd, const float M, const float MN)
   return scaled * (MN - M) + M;
 };
 
+float
+random_01(RandomState& rnd)
+{
+  return random(rnd, 0.0f, 1.0f);
+};
+
 } // namespace game2d

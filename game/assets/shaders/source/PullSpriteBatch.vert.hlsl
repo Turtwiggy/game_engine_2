@@ -3,7 +3,7 @@ struct SpriteData
     float3 Position;
     float Rotation;
     float2 Scale;
-    float2 Padding;
+    float2 IsEmitterAndIsOccluder;
     float TexU, TexV, TexW, TexH;
     float4 Color;
     float2 SpriteMax;
@@ -14,13 +14,13 @@ struct SpriteData
 
 struct Output
 {
-    float2 Texcoord : TEXCOORD0;
-    float4 Color : TEXCOORD1;
     float4 Position : SV_Position;
-    float3 FragPos : TEXCOORD2;
-    float2 SpriteMax: TEXCOORD3; 
-    float2 SpritePos: TEXCOORD4;
-    float2 SpriteWH: TEXCOORD5;
+    float2 TexCoord : TEXCOORD0;
+    float4 Color : TEXCOORD1;
+    float2 SpriteMax: TEXCOORD2; 
+    float2 SpritePos: TEXCOORD3;
+    float2 SpriteWH: TEXCOORD4;
+    float2 IsEmitterAndIsOccluder: TEXCOORD5;
 };
 
 StructuredBuffer<SpriteData> DataBuffer : register(t0, space0);
@@ -63,11 +63,11 @@ Output main(uint id : SV_VertexID)
 
     Output output;
     output.Position = mul(ViewProjectionMatrix, float4(world_pos, 1.0f));
-    output.FragPos = world_pos;
-    output.Texcoord = texcoord[vert];
+    output.TexCoord = texcoord[vert];
     output.Color = sprite.Color;
     output.SpriteMax = sprite.SpriteMax;
     output.SpritePos = sprite.SpritePos;
     output.SpriteWH = sprite.SpriteWH;
+    output.IsEmitterAndIsOccluder = sprite.IsEmitterAndIsOccluder;
     return output;
 }

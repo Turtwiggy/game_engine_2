@@ -4,8 +4,6 @@
 
 #include "game_and_engine_interop.hpp"
 
-#include <string>
-
 namespace game2d {
 
 // struct Raws
@@ -28,6 +26,8 @@ spawn(entt::registry& r,
       const vec2 size,
       const ColourComponent colour,
       const bool is_static = false,
-      const bool is_sensor = false);
+      const bool is_sensor = false,
+      const bool is_emitter = false,
+      const bool is_occlude = false);
 
 } // namespace game2d

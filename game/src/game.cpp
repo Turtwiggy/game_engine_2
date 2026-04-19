@@ -30,11 +30,11 @@ static float camera_speed = 500.0f;
 static float mouse_sens = 0.01f;
 
 static float stuff_size = 32.0f;
-// static vec2 keyboard_l{ 0, 0 };
-// static vec2 keyboard_r{ 0, 0 };
+static vec2 keyboard_l{ 0, 0 };
+static vec2 keyboard_r{ 0, 0 };
 static vec2 controller_l{ 0, 0 };
 static vec2 controller_r{ 0, 0 };
-// static vec2 l_input{ 0, 0 };
+static vec2 l_input{ 0, 0 };
 // static vec2 r_input{ 0, 0 };
 static bool jump = false;
 static bool pickup = false;
@@ -53,7 +53,7 @@ const auto get_system_time_for_seed = []() -> int {
 void
 game_init(GameData* data)
 {
-  SDL_Log("(Game) Init()");
+  SDL_Log("game_init() - start");
 
   // sets as an instance of an entt::registry used by this dll
   data->r = &internal_r;
@@ -68,9 +68,10 @@ game_init(GameData* data)
   }
 
   // create physics world
-  SINGLE_Physics physics_c;
-  physics_c.worldId = emplace_or_replace_physics_world();
-  r.ctx().emplace<SINGLE_Physics>(physics_c);
+  const auto worldId = emplace_or_replace_physics_world();
+  SINGLE_Physics::get().worldId = worldId;
+  SDL_Log("Created physics world.");
+
   // create_empty<SINGLE_Physics>(r, physics_c);
   // r.emplace<Persistent>(get_first<SINGLE_Physics>(r));
 
@@ -87,18 +88,25 @@ game_init(GameData* data)
   for (int i = 0; i < 100; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
     const auto rnd_y = random(rnd, 0.0f, 720.0f);
-    const auto consumer_e = spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f });
+    // const bool is_emitter = random_01(rnd) > 0.5;
+    const bool is_emitter = false;
+    const bool is_occluder = true;
+
+    const auto consumer_e =
+      spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f }, false, false, is_emitter, is_occluder);
     r.emplace<ContainerReceiverComponent>(consumer_e);
     r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
   }
 
-  const auto provider_e = spawn(r, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f });
+  const auto provider_e = spawn(r, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f }, true, true);
   r.emplace<ContainerProviderComponent>(provider_e);
   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto player_e = spawn(r, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, true);
+  const auto player_e = spawn(r, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, false, true, false);
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
+
+  SDL_Log("game_init() - done");
 };
 
 void
@@ -107,7 +115,6 @@ game_fixed_update(GameData* data)
   auto& r = internal_r;
 
   // Apply force to first dynamic body
-  /*
   {
     auto view = r.view<const PhysicsBodyComponent, const TransformComponent, const PlayerComponent>();
     for (const auto& [e, pb_c, t_c, player_c] : view.each()) {
@@ -122,7 +129,6 @@ game_fixed_update(GameData* data)
       break;
     }
   }
-  */
 
   // Apply jump force
   {
@@ -144,8 +150,13 @@ game_fixed_update(GameData* data)
     }
   }
 
-  const uint64_t ms_dt = data->dt_ns / 1000;
-  update_physics_system(data, r, ms_dt);
+  // note: also see fixed_update() in main
+
+  // static constexpr int MILLISECONDS_PER_FIXED_TICK = 7; // or ~142 ticks per second
+  constexpr int MILLISECONDS_PER_FIXED_TICK = 16; // or ~62.5 ticks per second
+  constexpr Uint64 NS_PER_FIXED_TICK = (Uint64)(MILLISECONDS_PER_FIXED_TICK * 1e6);
+  constexpr float fixed_dt = MILLISECONDS_PER_FIXED_TICK / 1000.0f;
+  update_physics_system(data, r, fixed_dt);
 
   // Update transforms via physics body.
   update_transforms_from_physics(r);
@@ -162,7 +173,7 @@ game_update(GameData* data)
   // input events
   //
 
-  static SINGLE_Inputs inputs_c;
+  auto& inputs_c = SINGLE_Inputs::get();
   generate_button_state(evts, inputs_c);
 
   if (get_key_down(inputs_c, SDL_SCANCODE_SPACE))
@@ -172,46 +183,41 @@ game_update(GameData* data)
   if (get_key_down(inputs_c, SDL_SCANCODE_KP_9))
     create_empty<Request_GameOver>(r);
 
-  /*
-  if (get_key_down(inputs_c, SDL_SCANCODE_W))
-  keyboard_l.y = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_S))
-  keyboard_l.y = 1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_A))
-  keyboard_l.x = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_D))
-  keyboard_l.x = 1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_UP))
-  keyboard_r.y = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_DOWN))
-  keyboard_r.y = 1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_LEFT))
-  keyboard_r.x = -1;
-  if (get_key_down(inputs_c, SDL_SCANCODE_RIGHT))
-  keyboard_r.x = 1;
-  if (get_key_up(inputs_c, SDL_SCANCODE_W))
-  keyboard_l.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_S))
-  keyboard_l.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_A))
-  keyboard_l.x = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_D))
-  keyboard_l.x = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_UP))
-  keyboard_r.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_DOWN))
-  keyboard_r.y = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_LEFT))
-  keyboard_r.x = 0;
-  if (get_key_up(inputs_c, SDL_SCANCODE_RIGHT))
-  keyboard_r.x = 0;
-  */
+  keyboard_r.x = 0.0f;
+  keyboard_r.y = 0.0f;
+  // keyboard_r.y += get_key_held(inputs_c, SDL_SCANCODE_UP) ? -1.0f : 0.0f;
+  // keyboard_r.y += get_key_held(inputs_c, SDL_SCANCODE_DOWN) ? 1.0f : 0.0f;
+  // keyboard_r.x += get_key_held(inputs_c, SDL_SCANCODE_LEFT) ? -1.0f : 0.0f;
+  // keyboard_r.x += get_key_held(inputs_c, SDL_SCANCODE_RIGHT) ? 1.0f : 0.0f;
+
+  keyboard_l.x = 0.0f;
+  keyboard_l.y = 0.0f;
+  keyboard_l.y += get_key_held(inputs_c, SDL_SCANCODE_W) ? -1.0f : 0.0f;
+  keyboard_l.y += get_key_held(inputs_c, SDL_SCANCODE_S) ? 1.0f : 0.0f;
+  keyboard_l.x += get_key_held(inputs_c, SDL_SCANCODE_A) ? -1.0f : 0.0f;
+  keyboard_l.x += get_key_held(inputs_c, SDL_SCANCODE_D) ? 1.0f : 0.0f;
+
+  const auto clamp = [](float v, const float min, const float max) -> float { return std::min(std::max(v, min), max); };
+  keyboard_l.x = clamp(keyboard_l.x, -1.0f, 1.0f);
+  keyboard_l.y = clamp(keyboard_l.y, -1.0f, 1.0f);
+  keyboard_r.x = clamp(keyboard_r.x, -1.0f, 1.0f);
+  keyboard_r.y = clamp(keyboard_r.y, -1.0f, 1.0f);
+
+  const auto normalize = [](const vec2 v) -> vec2 {
+    const float len = glm::sqrt(v.x * v.x + v.y * v.y);
+    if (len < 1.0f)
+      return v; // no change needed, already within unit circle
+    if (len > 0)
+      return vec2{ v.x / len, v.y / len };
+    return v;
+  };
+  keyboard_l = normalize(keyboard_l);
+  keyboard_r = normalize(keyboard_r);
 
   data->mouse_dt = vec2{ 0, 0 };
 
   for (const SDL_Event& evt : evts) {
 
-    //
     // mouse events
     //
     if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
@@ -233,7 +239,7 @@ game_update(GameData* data)
       }
 
       if (m_evt.button == SDL_BUTTON_RIGHT)
-        spawn(r, data->mouse_pos, { stuff_size, stuff_size }, { 1.0, 1.0, 1.0 });
+        spawn(r, data->mouse_pos, { stuff_size, stuff_size }, { 1.0, 1.0, 1.0 }, false, false);
     }
     if (evt.type == SDL_EVENT_MOUSE_MOTION) {
       SDL_MouseMotionEvent m_evt = evt.motion;
@@ -260,11 +266,8 @@ game_update(GameData* data)
   }
 
   auto& ui_data = data->ui_data;
-
-  /*
-
-  // ui_data.keyboard_l = keyboard_l;
-  // ui_data.keyboard_r = keyboard_r;
+  ui_data.keyboard_l = keyboard_l;
+  ui_data.keyboard_r = keyboard_r;
 
   /*
   int n_joysticks = 0;
@@ -332,12 +335,12 @@ game_update(GameData* data)
   SDL_free(joysticks);
   */
 
-  // l_input = keyboard_l + controller_l;
+  l_input = keyboard_l + controller_l;
   // r_input = keyboard_r + controller_r;
 
-  // // clamp the inputs
-  // l_input.x = std::clamp(l_input.x, -1.0f, 1.0f);
-  // l_input.y = std::clamp(l_input.y, -1.0f, 1.0f);
+  // clamp the inputs
+  l_input.x = std::clamp(l_input.x, -1.0f, 1.0f);
+  l_input.y = std::clamp(l_input.y, -1.0f, 1.0f);
   // r_input.x = std::clamp(r_input.x, -1.0f, 1.0f);
   // r_input.y = std::clamp(r_input.y, -1.0f, 1.0f);
 
@@ -494,7 +497,7 @@ game_update_ui(GameUIData* ui_data)
     ImGui::Begin("SomeOtherWindow", nullptr, flags);
 
     ImGui::Text("Keyboard");
-    ImGui::Text("%f %f %f %f", data.keyboard_l.x, data.keyboard_l.y, data.keyboard_r.x, data.keyboard_r.y);
+    ImGui::Text("%0.2f %0.2f %0.2f %0.2f", data.keyboard_l.x, data.keyboard_l.y, data.keyboard_r.x, data.keyboard_r.y);
 
     ImGui::Text("Controllers");
     ImGui::Text("%i %f %f %f %f",
@@ -504,8 +507,8 @@ game_update_ui(GameUIData* ui_data)
                 data.controller_r.x,
                 data.controller_r.y);
 
-    ImGui::Text("Input");
-    // ImGui::Text("%f %f %f %f", l_input.x, l_input.y, r_input.x, r_input.y);
+    const auto& input_c = SINGLE_Inputs::get();
+    ImGui::Text("%zu down, %zu up, %zu held", input_c.keys_down.size(), input_c.keys_up.size(), input_c.keys_held.size());
 
     ImGui::Text("MouseInput");
     auto& io = ImGui::GetIO();

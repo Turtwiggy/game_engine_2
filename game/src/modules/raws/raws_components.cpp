@@ -1,5 +1,6 @@
 #include "pch.hpp"
 
+#include "game_and_engine_interop.hpp"
 #include "raws_components.hpp"
 
 #include "modules/box2d/box2d_components.hpp"
@@ -28,10 +29,11 @@ spawn(entt::registry& r,
       const vec2 size,
       const ColourComponent colour,
       const bool is_static,
-      const bool is_sensor)
+      const bool is_sensor,
+      const bool is_emitter,
+      const bool is_occluder)
 {
-  const auto& physics_c = r.ctx().get<SINGLE_Physics>();
-  const auto world_id = physics_c.worldId;
+  const auto world_id = SINGLE_Physics::get().worldId;
 
   b2Vec2 size_meters = pixels_to_meters(size);
   b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
@@ -60,6 +62,7 @@ spawn(entt::registry& r,
   r.emplace<TransformComponent>(e, t_c);
   r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
   r.emplace<SpriteComponent>(e, default_sprite());
+  r.emplace<LightComponent>(e, LightComponent{ .is_emitter = (float)is_emitter, .is_occluder = (float)is_occluder });
   r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ .id = body_id, .shape_ids = { shape_id } });
   set_entity_from_body_id(body_id, e);
 

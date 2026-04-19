@@ -1,11 +1,11 @@
 #pragma once
 
-#include "modules/camera/perspective_components.hpp"
 #include "modules/maths/vec.hpp"
 
 #include <SDL3/SDL.h>
 #include <box2d/box2d.h>
 #include <entt/entt.hpp>
+#include <glm/glm.hpp>
 #include <imgui.h>
 
 #include <mutex>
@@ -41,6 +41,12 @@ struct SpriteComponent
   float sprite_wh_y = 0.0f;
 };
 
+struct LightComponent
+{
+  float is_emitter = 0.0f;
+  float is_occluder = 0.0f;
+};
+
 //
 // game components
 //
@@ -57,11 +63,16 @@ struct RandomState
 float
 random(RandomState& rnd, const float M, const float MN);
 
+// Returns [0, 1)
+float
+random_01(RandomState& rnd);
+
 struct Renderable
 {
   TransformComponent transform;
   ColourComponent colour;
   SpriteComponent sprite;
+  LightComponent light;
 };
 
 struct InventoryComponent

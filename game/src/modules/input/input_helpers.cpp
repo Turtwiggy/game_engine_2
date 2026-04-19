@@ -31,11 +31,17 @@ get_key_held(const SINGLE_Inputs& inputs_c, const SDL_Scancode scancode)
 void
 generate_button_state(const std::vector<SDL_Event>& events, SINGLE_Inputs& inputs)
 {
-  // set all as unheld
   inputs.keys_down.clear();
   inputs.keys_up.clear();
 
   for (const SDL_Event& evt : events) {
+
+    if (evt.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+      inputs.keys_down.clear();
+      inputs.keys_up.clear();
+      inputs.keys_held.clear();
+      break;
+    }
 
     if (evt.type == SDL_EVENT_KEY_DOWN) {
       const auto scancode = evt.key.scancode;
@@ -46,9 +52,8 @@ generate_button_state(const std::vector<SDL_Event>& events, SINGLE_Inputs& input
 
       if (evt.key.repeat)
         continue;
-
       inputs.keys_down.push_back(scancode);
-      inputs.keys_held.push_back(scancode);
+      inputs.keys_held.emplace(scancode);
     }
 
     if (evt.type == SDL_EVENT_KEY_UP) {
@@ -59,11 +64,12 @@ generate_button_state(const std::vector<SDL_Event>& events, SINGLE_Inputs& input
       const auto repeat = evt.key.repeat;
       SDL_Log("(GameThread)(GameUpdate) KeyUp %s %i %i", scancode_name, down, repeat);
 
+      if (evt.key.repeat)
+        continue;
       inputs.keys_up.push_back(scancode);
 
-      const auto& held = std::find(inputs.keys_held.begin(), inputs.keys_held.end(), scancode);
-      if (held != inputs.keys_held.end())
-        inputs.keys_held.erase(held);
+      const auto match = [scancode](SDL_Scancode held_scancode) { return held_scancode == scancode; };
+      std::erase_if(inputs.keys_held, match);
     }
 
     //

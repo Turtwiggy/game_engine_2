@@ -1,20 +1,23 @@
 #pragma once
 
+#include "singleton.hpp"
+
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_scancode.h>
 
+#include <unordered_set>
 #include <vector>
 
 namespace game2d {
 
-struct SINGLE_Inputs
+struct SINGLE_Inputs : Singleton<SINGLE_Inputs>
 {
   // keys pressed in Update() to be processed in FixedUpdate()
   // note: this is deliberately not a Set incase a user e.g.
   // press W, release W, press W before one FixedUpdate() occurs.
   std::vector<SDL_Scancode> keys_down;
   std::vector<SDL_Scancode> keys_up;
-  std::vector<SDL_Scancode> keys_held;
+  std::unordered_set<SDL_Scancode> keys_held;
 };
 
 bool
