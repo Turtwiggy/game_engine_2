@@ -3,7 +3,11 @@
   "version-string": "0.0.1",
   "dependencies": [
     "gtest",
-    "SDL3",
+    {
+      "name": "sdl3",
+      "version>=": "3.2.18",
+      "features": ["vulkan"]
+    },
     "tracy",
     "nlohmann-json"
   ]

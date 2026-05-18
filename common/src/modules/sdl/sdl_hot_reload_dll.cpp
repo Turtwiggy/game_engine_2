@@ -2,7 +2,6 @@
 
 #include "sdl_exception.hpp"
 #include "sdl_hot_reload_dll.hpp"
-#include <SDL3/SDL_loadso.h>
 
 namespace game2d {
 
