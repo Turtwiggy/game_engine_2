@@ -4,12 +4,6 @@
 
 namespace game2d {
 
-struct SwapchainUbo
-{
-  vec2 mouse_pos;
-  vec2 screen_wh;
-};
-
 void
 render_to_texture(
   //
@@ -60,6 +54,7 @@ void
 render_to_swapchain(SDL_GPUCommandBuffer* cmd_buf,
                     SDL_GPUGraphicsPipeline* pipeline,
                     SDL_GPUBuffer* quad_data_buffer,
+                    SDL_GPUBuffer* lights_buffer,
                     std::vector<SDL_GPUTexture*> textures,
                     SDL_GPUSampler* sampler,
                     SDL_Window* window,
@@ -94,6 +89,7 @@ render_to_swapchain(SDL_GPUCommandBuffer* cmd_buf,
       {
         SDL_BindGPUGraphicsPipeline(render_pass, pipeline);
         SDL_BindGPUVertexStorageBuffers(render_pass, 0, &quad_data_buffer, 1);
+        SDL_BindGPUFragmentStorageBuffers(render_pass, 0, &lights_buffer, 1);
 
         if (textures.size() > 0) {
           std::vector<SDL_GPUTextureSamplerBinding> samplers;

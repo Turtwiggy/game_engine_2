@@ -9,6 +9,14 @@ SamplerState DistanceSampler : register(s1, space2);
 // SamplerState EmittersAndOccludersSampler : register(s2, space2);
 
 // https://www.reddit.com/r/sdl/comments/1ir4kq0/heads_up_about_sets_and_bindings_if_youre_using/
+struct LightData
+{
+    float3 position;
+    float enabled;
+};
+StructuredBuffer<LightData> LightBuffer : register(t2, space2);
+
+// https://www.reddit.com/r/sdl/comments/1ir4kq0/heads_up_about_sets_and_bindings_if_youre_using/
 cbuffer UBO : register(b0, space3)
 {
     float2 MousePos; 
@@ -20,14 +28,6 @@ struct Input
     float4 Position : SV_Position;
     float2 TexCoord : TEXCOORD0;
     float4 Color : TEXCOORD1;
-};
-
-struct Light
-{
-    float4 colour;
-    float2 position;
-    float luminance;
-    bool enabled;
 };
 
 float V2_F16(float2 v) { return v.x + (v.y / 255.0); }
@@ -68,8 +68,7 @@ float shadow(float2 p, float2 pos, float radius)
         // width of cone-overlap at light
         // 0 in center, so 50% overlap: add one radius outside of loop to get total coverage
         // should be '(sd / dt) * dl', but '*dl' outside of loop
-        // lf = min(lf, sd / dt);
-        lf = min(lf, (sd / dt));
+        lf = min(lf, sd / dt);
         
         // move ahead
         dt += max(1.0, abs(sd));
@@ -110,7 +109,6 @@ void setLuminance(inout float4 col, float lum)
     col *= lum;
 }
 
-
 // dist will be a value between 0 and 1
 float AO(float dist, float radius, float intensity)
 {
@@ -122,14 +120,14 @@ float AO(float dist, float radius, float intensity)
 // https://www.shadertoy.com/view/4dfXDn
 float4 main(Input input) : SV_Target0
 {    
-    // fragCoord : is a vec2 that is between 0 > 640 on the X axis and 0 > 360 on the Y axis
-    // iResolution : is a vec2 with an X value of 640 and a Y value of 360
+    // fragCoord : is a float2 that is between 0 > 640 on the X axis and 0 > 360 on the Y axis
+    // iResolution : is a float2 with an X value of 640 and a Y value of 360
     float2 v_uv = input.TexCoord;
     float2 viewport_wh = ScreenWH;
     float2 fragCoord = (v_uv * viewport_wh);
     float2 iResolution = viewport_wh;
     float2 center = iResolution.xy * 0.5;
-    // float2 p = ((fragCoord - center) * zoom + center + vec2(0.5));
+    // float2 p = ((fragCoord - center) * zoom + center + float2(0.5));
     // float2 p = ((fragCoord - center) + center + float2(0.5, 0.5));
     float2 p = fragCoord.xy + float2(0.5, 0.5);
     float2 c = iResolution.xy / 2.0;
@@ -139,25 +137,33 @@ float4 main(Input input) : SV_Target0
     // return hmm;
     
     float4 col = float4(0.0, 0.0, 0.0, 1.0);
-    col = float4(0.3, 0.3, 0.3, 1.0);
     
     // ambient occlusion
-    col *= AO(dist, 20.0f, 0.4f);
+    // col = float4(0.3, 0.3, 0.3, 1.0);
+    // col *= AO(dist, 40.0f, 0.4f);
+    // col = float4(0.3f, 0.3f, 0.3f, 1.0f);
+    // col *= 1.0f - AO(dist, 1.0f, 0.8f);
 
-    for(int i = 0; i < 16; i++) {
-        
-        Light l;
-        l.position = MousePos.xy;
-        // l.colour = float4(0.75, 1.0, 0.5, 1.0);
-        l.colour = float4(1.0, 1.0, 1.0, 1.0);
-        l.luminance = 0.8;
-        setLuminance(l.colour, l.luminance);
+    uint lightCount, stride;
+    LightBuffer.GetDimensions(lightCount, stride);
 
-        col += drawLight(p, l.position, l.colour, dist, 150.0, 6.0);
-        break;
+    for(int i = 0; i < lightCount; i++){
+        LightData l = LightBuffer[i];
+
+        float2 lightPos = l.position.xy;
+        float4 lightCol = float4(1.0, 1.0, 1.0, 1.0);
+        setLuminance(lightCol, 1.25);
+
+        col += drawLight(p, lightPos, lightCol, dist, 250.0, 6.0 );
+
+        // Light l0;
+        // l0.position = center;
+        // l0.colour = float4(1.0, 1.0, 1.0, 1.0);
+        // l0.luminance = 1.25;
+        // setLuminance(l0.colour, l0.luminance);
+        // col += drawLight(p, l0.position, l0.colour, dist, 1000.0, 6.0);
+        // col += drawLight(p, l1.position, l1.colour, dist, 250.0, 6.0);
     }
-
-    // return col;
 
     float4 scene_col = Screen_SpriteTexture.Sample(SpriteSampler, input.TexCoord);
     if(all(scene_col.rgb == 0.0)){

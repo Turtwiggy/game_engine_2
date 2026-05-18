@@ -28,7 +28,9 @@ float4 main(Input input) : SV_Target0
   float dist = distance(jfuv.xy * ScreenWH, v_uv * ScreenWH);
 
   float4 eao = Texture_EmittersAndOccluders.Sample(Sampler_EmittersAndOccluders, v_uv);
+
+  // note: *0 because calculating the distance as inside the occluder/emitter as -1 is wrong
   float dist_sign = eao.r > 0.0 ? 0.0 : 1.0;
   
-  return float4(dist, dist, dist, dist_sign);
+  return float4(dist * dist_sign, dist, dist, 1.0);
 }

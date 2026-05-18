@@ -46,11 +46,12 @@ set(PCH_INSTANTIATE_TEMPLATES ON)
 link_libs(GameDLL)
 
 if(${CMAKE_BUILD_TYPE} MATCHES Debug)
+  # set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2dd.dll)
   set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2dd.lib)
-  set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2dd.dll)
+
 else()
+  # set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2d.dll)
   set(BOX2D_LIB ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/src/box2d.lib)
-  set(BOX2D_DLL ${CMAKE_SOURCE_DIR}/thirdparty/box2d/build/bin/box2d.dll)
 endif()
 
 target_link_libraries(GameDLL PRIVATE ${BOX2D_LIB})

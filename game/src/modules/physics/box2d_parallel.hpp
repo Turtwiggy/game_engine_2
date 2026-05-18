@@ -10,4 +10,7 @@ emplace_or_replace_physics_world();
 void
 physics_reset_task_count();
 
+void
+physics_shutdown();
+
 } // namespace game2d

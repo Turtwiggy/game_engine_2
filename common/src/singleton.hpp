@@ -9,6 +9,10 @@ namespace game2d {
 template<class T>
 class Singleton
 {
+
+  Singleton& operator=(const Singleton&) = default;
+  Singleton& operator=(Singleton&&) = default;
+
 public:
   static T& get()
   {
@@ -16,12 +20,18 @@ public:
     return instance;
   }
 
+  void reset()
+  {
+    Singleton instance;
+    *this = std::move(instance);
+  }
+
 protected:
   Singleton() {}
 
 public:
-  Singleton(Singleton const&) = delete;
-  void operator=(Singleton const&) = delete;
+  Singleton(const Singleton&) = delete;
+  Singleton(Singleton&&) = delete;
 };
 
 } // namespace game2d

@@ -34,6 +34,7 @@ spawn(entt::registry& r,
       const bool is_occluder)
 {
   const auto world_id = SINGLE_Physics::get().worldId;
+  // SDL_Log("Spawning thing at: %0.2f %0.2f", pos.x, pos.y);
 
   b2Vec2 size_meters = pixels_to_meters(size);
   b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);

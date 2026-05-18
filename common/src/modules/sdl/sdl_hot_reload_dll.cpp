@@ -2,6 +2,7 @@
 
 #include "sdl_exception.hpp"
 #include "sdl_hot_reload_dll.hpp"
+#include <SDL3/SDL_loadso.h>
 
 namespace game2d {
 
@@ -16,6 +17,8 @@ void
 game_update_ui_stub(GameUIData* ui_data) {};
 void
 game_refresh_stub(GameData* data) {};
+void
+game_shutdown_stub(const GameData* data) {};
 
 bool
 copy_file(const char* src_dll_name, const char* dst_dll_name)
@@ -39,9 +42,6 @@ copy_file(const char* src_dll_name, const char* dst_dll_name)
 void
 sdl_load_game_code(sdl_game_code& result, const std::string src_dll_name, const std::string dst_dll_name)
 {
-  result.valid = false;
-  result.rebuilt = false;
-
   auto copy_result = copy_file(src_dll_name.c_str(), dst_dll_name.c_str());
   if (!copy_result) {
     throw SDLException("Failed to copy dll.");
@@ -100,26 +100,38 @@ sdl_load_game_code(sdl_game_code& result, const std::string src_dll_name, const 
     result.game_refresh = refresh;
   }
 
-  SDL_Log("Load DLL... success");
+  {
+    const auto shutdown = (void (*)(const GameData*))SDL_LoadFunction(result.game_code_dll, "game_shutdown");
+    if (!shutdown) {
+      throw SDLException("Failed to load game_shutdown() from dll");
+      exit(SDL_APP_FAILURE);
+    }
+    result.game_shutdown = shutdown;
+  }
+
   result.valid = true;
+  SDL_Log("Load DLL... success");
 };
 
 void
-sdl_unload_game_code(sdl_game_code* game_code)
+sdl_unload_game_code(sdl_game_code& game_code)
 {
-  game_code->valid = false;
+  game_code.valid = false;
 
-  if (game_code->game_code_dll) {
+  if (game_code.game_code_dll) {
     SDL_Log("Unload DLL...");
-    SDL_UnloadObject(game_code->game_code_dll);
-    game_code->game_code_dll = NULL;
+    SDL_UnloadObject(game_code.game_code_dll);
+    game_code.game_code_dll = nullptr;
   }
 
-  game_code->game_init = game_init_stub;
-  game_code->game_fixed_update = game_fixed_update_stub;
-  game_code->game_update = game_update_stub;
-  game_code->game_update_ui = game_update_ui_stub;
-  game_code->game_refresh = game_refresh_stub;
+  game_code.game_init = game_init_stub;
+  game_code.game_fixed_update = game_fixed_update_stub;
+  game_code.game_update = game_update_stub;
+  game_code.game_update_ui = game_update_ui_stub;
+  game_code.game_refresh = game_refresh_stub;
+  game_code.game_shutdown = game_shutdown_stub;
+
+  SDL_Log("Unload complete.");
 };
 
 } // namespace game2d

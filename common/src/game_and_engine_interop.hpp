@@ -75,6 +75,12 @@ struct Renderable
   LightComponent light;
 };
 
+typedef struct Light
+{
+  float pos_x, pos_y, pos_z;
+  float enabled;
+} Light;
+
 struct InventoryComponent
 {
   // std::vector<entt::entity> items;
@@ -144,6 +150,7 @@ struct RenderData
 
   // data
   std::vector<Renderable> renderable;
+  std::vector<Light> lights;
   CommonUiData ui_data;
 };
 
@@ -155,6 +162,7 @@ struct GameUIData
   glm::vec3 camera_pos;
 
   std::vector<Renderable> renderable;
+  std::vector<Light> lights;
   CommonUiData ui_data;
 };
 

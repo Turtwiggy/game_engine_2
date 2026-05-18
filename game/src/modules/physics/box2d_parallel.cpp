@@ -131,4 +131,24 @@ emplace_or_replace_physics_world()
   return worldId;
 }
 
+void
+physics_shutdown()
+{
+  if (!init)
+    return;
+  // SDL_Log("shutdown - physics_shutdown()");
+
+  b2DestroyWorld(worldId);
+  worldId = b2_nullWorldId;
+
+  m_sample.m_scheduler->WaitforAllAndShutdown();
+  delete m_sample.m_scheduler;
+  m_sample.m_scheduler = nullptr;
+
+  delete[] m_sample.m_tasks;
+  m_sample.m_tasks = nullptr;
+
+  init = false;
+}
+
 } // namespace game2d

@@ -27,6 +27,7 @@ void
 render_to_swapchain(SDL_GPUCommandBuffer* cmd_buf,
                     SDL_GPUGraphicsPipeline* pipeline,
                     SDL_GPUBuffer* quad_data_buffer,
+                    SDL_GPUBuffer* lights_buffer,
                     std::vector<SDL_GPUTexture*> textures,
                     SDL_GPUSampler* sampler,
                     SDL_Window* window,

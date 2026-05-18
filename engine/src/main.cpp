@@ -1,6 +1,5 @@
 #include "pch.hpp"
 
-// #include "box2d_parallel.hpp"
 #include "game_and_engine_interop.hpp"
 #include "imgui_helpers.hpp"
 #include "modules/models/model_helpers.hpp"
@@ -79,7 +78,6 @@ static SDL_Window* window;
 static SDL_GPUDevice* device;
 
 static std::atomic_bool rebuild_shaders(false);
-static Uint64 rebuild_took = 0;
 
 const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
   Uint64 dt_ns = now - past;
@@ -87,6 +85,55 @@ const auto calc_dt_ns = [](Uint64 now, Uint64& past) -> Uint64 {
   past = now;
   return dt_ns;
 };
+
+void
+delete_hotreload_locked_dll()
+{
+  const auto locked_dll_path = std::format("{}GameDLL-hot-locked.dll", SDL_GetBasePath());
+  SDL_Log("Deleting: %s", locked_dll_path.c_str());
+
+  const auto removed = SDL_RemovePath(locked_dll_path.c_str());
+
+  if (removed)
+    SDL_Log("Deleted -locked dll...");
+  else
+    SDL_Log("Failed to delete: %s", SDL_GetError());
+}
+
+void
+do_rebuild_dll(sdl_game_code& game_code, std::string src_dll, std::string dst_dll)
+{
+  // Rebuild the dll
+  SDL_Log("Rebuild dll...");
+
+  game_code.valid = false;
+
+  const auto now = SDL_GetTicks();
+
+  // rebuild_dll
+  const auto build_script = "rebuild_dll.bat";
+  const auto full_path = std::format("{}assets/scripts/{}", SDL_GetBasePath(), build_script);
+  const auto cmd = std::format("{}", full_path);
+  const int result = std::system(cmd.c_str());
+  if (result != 0)
+    SDL_Log("Build failed...");
+
+  const auto after = SDL_GetTicks();
+  const auto rebuild_shaders_took = after - now;
+  SDL_Log("Build took %zu ms", (after - now));
+
+  if (result == 0) {
+    SDL_Log("Build success...");
+    game_code.game_shutdown(&game_data);
+
+    sdl_unload_game_code(game_code);
+    delete_hotreload_locked_dll();
+    sdl_load_game_code(game_code, src_dll, dst_dll);
+    SDL_Log("Load DLL... (rebuilt=>true)");
+  }
+
+  game_code.rebuilt = true;
+}
 
 void
 GameThread()
@@ -126,14 +173,6 @@ GameThread()
       game_data.mouse_pos = mouse_pos;
     }
 
-    // Check for rebuild
-    if (game_code.rebuilt && game_code.valid) {
-      SDL_Log("(GameThread) game_refresh()");
-      game_code.game_refresh(&game_data);
-      game_code.game_init(&game_data);
-      game_code.rebuilt = false;
-    }
-
     // run physics at fixed timesteps
     static Uint64 accu = 0;
     constexpr int physics_substep_count = 4;
@@ -158,6 +197,14 @@ GameThread()
         game_code.game_update(&game_data);
     }
 
+    // Check for rebuild
+    if (game_code.rebuilt && game_code.valid) {
+      SDL_Log("(GameThread) game_refresh()");
+      game_code.game_refresh(&game_data);
+      game_code.game_init(&game_data);
+      game_code.rebuilt = false; // eat the rebuilt flag
+    }
+
     // Ding ding! frame done. Update RenderData
     RenderData& wb = GetWriteBuffer();
     {
@@ -166,19 +213,33 @@ GameThread()
 
       // should do something better than .clear()
       wb.renderable.clear();
+      wb.lights.clear();
       wb.ui_data.hmm.clear();
 
       if (game_code.valid) {
+
         // copy transforms in to RenderData.
-        const auto view =
+        const auto rend_view =
           game_data.r->view<const TransformComponent, const ColourComponent, const SpriteComponent, const LightComponent>();
-        view.each([&](entt::entity e, const auto& t_c, const auto& col_c, const auto& sprite_c, const auto& light_c) {
+        rend_view.each([&](entt::entity e, const auto& t_c, const auto& col_c, const auto& sprite_c, const auto& light_c) {
           wb.renderable.push_back(Renderable{
             .transform = t_c,
             .colour = col_c,
             .sprite = sprite_c,
             .light = light_c,
           });
+        });
+
+        const auto light_view = game_data.r->view<const TransformComponent, const LightComponent>();
+
+        light_view.each([&](entt::entity e, const auto& t_c, const auto& light_c) {
+          if (light_c.is_emitter) {
+            wb.lights.push_back(Light{
+              .pos_x = t_c.pos.x,
+              .pos_y = t_c.pos.y,
+              .pos_z = t_c.pos.y,
+            });
+          }
         });
 
         // copy anything else in to renderdata buffer.
@@ -246,7 +307,6 @@ CreateErrorPipeline()
   };
   return create_2d_pipeline(device, window, vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
 };
-
 SDL_GPUGraphicsPipeline*
 CreateSpritePipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
 {
@@ -285,7 +345,6 @@ CreateEmitterAndOccluderPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU
   };
   return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
 }
-
 SDL_GPUGraphicsPipeline*
 CreateSpriteNormalPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
 {
@@ -376,7 +435,7 @@ CreateMixLightingAndScenePipeline(const SDL_GPUSampleCount sample_count = SDL_GP
     .shaderFilename = "SpriteLightingMix.frag",
     .samplerCount = 2,
     .uniformBufferCount = 1,
-    .storageBufferCount = 0,
+    .storageBufferCount = 1,
     .storageTextureCount = 0,
   };
   return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
@@ -454,6 +513,10 @@ RenderThread()
 
   auto* quad_data_transfer_buffer = create_transfer_buffer<SpriteInstance>(1); // fullscreen quad
   auto* quad_data_buffer = create_data_buffer<SpriteInstance>(1);
+
+  const uint32_t MAX_LIGHTS = 32;
+  auto* light_data_transfer_buffer = create_transfer_buffer<Light>(MAX_LIGHTS);
+  auto* light_data_buffer = create_data_buffer<Light>(MAX_LIGHTS);
 
   Uint32 render_w = 0;
   Uint32 render_h = 0;
@@ -572,11 +635,12 @@ RenderThread()
       game_ui_data.renderable = read_buffer.renderable; // take a copy
       game_ui_data.ui_data = read_buffer.ui_data;
       game_ui_data.camera_pos = read_buffer.camera_pos;
+      game_ui_data.lights = read_buffer.lights;
     }
     const auto& renderables = game_ui_data.renderable;
     const auto& camera_pos = game_ui_data.camera_pos;
+    const auto& lights_pos = game_ui_data.lights;
 
-    //
     // grab all the events
     //
     std::vector<SDL_Event> events;
@@ -584,20 +648,6 @@ RenderThread()
       ZoneScopedN("(RenderThread) events_dequeue_all()");
       events = rend_event_queue.dequeue_all();
     }
-
-    // check if a key was pressed.
-    // {
-    //   ZoneScopedN("(RenderThread) events");
-    //   for (const auto& evt : events) {
-    //     if (evt.type == SDL_EVENT_WINDOW_RESIZED) {
-    //       SDL_Log("TODO: recreate render/depth textures");
-    // SDL_ReleaseGPUTexture(device, xyz);
-    // SDL_GetWindowSize(window, &window_w, &window_h);
-    // msaa_depth_texture = create_depth_texture(device, 2.0f * window_w, 2.0f * window_h, msaa);
-    // gpu_texture_a = create_render_texture();
-    //     }
-    //   }
-    // }
 
     // Rebuild pipelines & shaders
     {
@@ -649,10 +699,6 @@ RenderThread()
         rebuild_shaders = true;
 
       ImGui::Text("Rebuild DLL (9)");
-      // if (rebuild_dll)
-      //   ImGui::Text("Rebuilding DLL...");
-      // else if (ImGui::Button("Rebuild DLL (9)"))
-      //   rebuild_dll = true;
 
       ImGui::End();
 
@@ -830,6 +876,45 @@ RenderThread()
         SDL_EndGPUCopyPass(copy_pass);
       }
 
+      // Lights => GPU
+      {
+        Light* data_ptr = (Light*)SDL_MapGPUTransferBuffer(device, light_data_transfer_buffer, true);
+        for (Uint32 i = 0; i < MAX_LIGHTS; i++) {
+
+          data_ptr[i].pos_x = 0;
+          data_ptr[i].pos_y = 0;
+          data_ptr[i].pos_z = 0;
+          data_ptr[i].enabled = 0;
+
+          const bool draw = i < lights_pos.size();
+          if (draw) {
+            data_ptr[i].pos_x = lights_pos[i].pos_x;
+            data_ptr[i].pos_y = lights_pos[i].pos_y;
+            data_ptr[i].pos_z = lights_pos[i].pos_z;
+            data_ptr[i].enabled = 1.0f;
+          }
+
+          //
+        }
+        SDL_UnmapGPUTransferBuffer(device, light_data_transfer_buffer);
+
+        // Upload instance data.
+        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buf);
+        {
+          const auto transfer_buffer_loc = SDL_GPUTransferBufferLocation{
+            .transfer_buffer = light_data_transfer_buffer,
+            .offset = 0,
+          };
+          const auto gpu_buffer_region_loc = SDL_GPUBufferRegion{
+            .buffer = light_data_buffer,
+            .offset = 0,
+            .size = MAX_LIGHTS * sizeof(Light),
+          };
+          SDL_UploadToGPUBuffer(copy_pass, &transfer_buffer_loc, &gpu_buffer_region_loc, true);
+        }
+        SDL_EndGPUCopyPass(copy_pass);
+      }
+
       // render the sprites to a texture
       render_to_texture(
         //
@@ -873,7 +958,6 @@ RenderThread()
         nullptr);
 
       // Lighting: Jumpflood
-
       const int max_dim = glm::max(lighting_wh.x, lighting_wh.y);
       const int n_jumpflood_passes = (int)(glm::ceil(glm::log(max_dim) / std::log(2.0f)));
       SDL_GPUTexture* final_lighting_texture = nullptr;
@@ -938,6 +1022,7 @@ RenderThread()
         cmd_buf,
         mix_pipeline,
         quad_data_buffer,
+        light_data_buffer,
         {
           gpu_texture_a,
           gpu_texture_lighting_voronoi_distance,
@@ -1042,12 +1127,11 @@ main(int argc, char* argv[])
   //   "libGameDLL.so";
   // #elif __APPLE__
   //   "libGameDLL.dylib";
-  // load game_code dll
+  // Load GameDLL.dll on launch
   const auto src_dll = "GameDLL-hot-unlocked.dll";
   const auto dst_dll = "GameDLL-hot-locked.dll"; // when loaded, system processor locks it
   static std::atomic_bool rebuild_dll(false);
-
-  // Load GameDLL.dll on launch
+  delete_hotreload_locked_dll();
   sdl_load_game_code(game_code, src_dll, dst_dll);
 
   // Start threads, innit
@@ -1096,35 +1180,9 @@ main(int argc, char* argv[])
     // Call SDL_GetMouseState on main thread.
     SDL_GetMouseState(&mouse_pos.x, &mouse_pos.y);
 
-    // Rebuild the dll
     if (rebuild_dll) {
+      do_rebuild_dll(game_code, src_dll, dst_dll);
       rebuild_dll = false;
-      game_code.valid = false;
-      SDL_Log("Rebuild dll...");
-
-      auto now = SDL_GetTicks();
-
-      // rebuild_dll
-      const auto build_script = "rebuild_dll.bat";
-      const auto full_path = std::format("{}assets/scripts/{}", SDL_GetBasePath(), build_script);
-      const auto cmd = std::format("{}", full_path);
-      const int result = std::system(cmd.c_str());
-
-      if (result != 0) {
-        SDL_Log("Build failed...");
-      }
-
-      auto after = SDL_GetTicks();
-      rebuild_took = after - now;
-      SDL_Log("Build took %zu ms", after - now);
-
-      if (result == 0) {
-        SDL_Log("Build success...");
-        sdl_unload_game_code(&game_code);
-        sdl_load_game_code(game_code, src_dll, dst_dll);
-        game_code.rebuilt = true;
-        SDL_Log("Load DLL... (rebuilt=>true)");
-      }
     }
 
     SDL_Delay(1); // slow down the event thread
