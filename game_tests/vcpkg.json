@@ -1,14 +1,21 @@
 {
-  "name": "default-dependencies",
-  "version-string": "0.0.1",
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+
   "dependencies": [
+    {
+      "name": "assimp",
+      "version>=": "6.0.2"
+    },
+    "glm",
     "gtest",
+    "nlohmann-json",
     {
       "name": "sdl3",
       "version>=": "3.2.18",
       "features": ["vulkan"]
     },
-    "tracy",
-    "nlohmann-json"
-  ]
+    "stb"
+  ],
+
+  "builtin-baseline": "4334d8b4c8916018600212ab4dd4bbdc343065d1"
 }
