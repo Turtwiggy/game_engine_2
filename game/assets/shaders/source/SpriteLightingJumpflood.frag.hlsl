@@ -20,7 +20,7 @@ cbuffer UniformBlock : register(b0, space3)
 
 float V2_F16(float2 v) { return v.x + (v.y / 255.0); }
 
-float4 main(Input input) : SV_Target0
+float2 main(Input input) : SV_Target0
 {
   float2 v_uv = input.TexCoord;
 
@@ -54,5 +54,5 @@ float4 main(Input input) : SV_Target0
     }
   }
 
-  return float4(closest_pos, 0.0, 1.0);
+  return float2(closest_pos);
 }

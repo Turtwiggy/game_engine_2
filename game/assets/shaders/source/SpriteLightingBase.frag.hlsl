@@ -11,20 +11,21 @@ struct Input
   float2 IsEmitterAndIsOccluder: TEXCOORD5;
 };
 
-float4 main(Input input) : SV_Target0
+float2 main(Input input) : SV_Target0
 {
   float isEmitter = input.IsEmitterAndIsOccluder.x;
   float isOccluder = input.IsEmitterAndIsOccluder.y;
   float2 v_uv = input.TexCoord;
 
   // return float4(v_uv.x, v_uv.y, 0.0, 1.0);
-  // if(isEmitter == 1){
-    //   return float4(1.0, 1.0, 1.0, 1.0);
-  // }
-  // if(isOccluder == 1){
-    //   return float4(0.0, 0.0, 1.0, 1.0);
+  // if(isEmitter == 1.0){
+    //   return float4(0.0, 1.0, 0.0, 1.0);
   // }
 
-  // // return float4(v_uv.x, v_uv.y, 0.0, 1.0);
-  return float4(1.0, 0.0, 0.0, 1.0);
+  if(isOccluder == 1.0){
+    return float2(1.0, 1.0);
+  }
+
+  // return float4(v_uv.x, v_uv.y, 0.0, 1.0);
+  return float2(0.0, 0.0);
 }

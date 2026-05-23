@@ -17,7 +17,7 @@ struct Input
 float V2_F16(float2 v) { return v.x + (v.y / 255.0); }
 float2 F16_V2(float f) { return float2(floor(f * 255.0) / 255.0, frac(f * 255.0)); }
 
-float4 main(Input input) : SV_Target0
+float2 main(Input input) : SV_Target0
 {
   float2 v_uv = input.TexCoord;
   float4 jfuv = Texture_Jumpflood.Sample(Sampler_Jumpflood, v_uv);
@@ -32,5 +32,5 @@ float4 main(Input input) : SV_Target0
   // note: *0 because calculating the distance as inside the occluder/emitter as -1 is wrong
   float dist_sign = eao.r > 0.0 ? 0.0 : 1.0;
   
-  return float4(dist * dist_sign, dist, dist, 1.0);
+  return float2(dist, dist_sign);
 }

@@ -2,7 +2,7 @@
 Texture2D<float4> Screen_SpriteTexture : register(t0, space2);
 SamplerState SpriteSampler : register(s0, space2);
 
-Texture2D<float4> Scene_DistanceTexture : register(t1, space2);
+Texture2D<float2> Scene_DistanceTexture : register(t1, space2);
 SamplerState DistanceSampler : register(s1, space2);
 
 // Texture2D<float4> Scene_EmittersAndOccluders : register(t2, space2);
@@ -34,16 +34,15 @@ float V2_F16(float2 v) { return v.x + (v.y / 255.0); }
 float sceneDist(float2 pix) {
 
     float2 uv = pix / ScreenWH;
-    float4 distTex = Scene_DistanceTexture.Sample(DistanceSampler, uv);
+    float2 distTex = Scene_DistanceTexture.Sample(DistanceSampler, uv);
 
     // float dist = V2_F16(distTex.rg);
     float dist = distTex.r;
-    float sign = distTex.a;
+    float sign = distTex.g;
     return dist * sign;
 }
 
 // lighting and shadows
-
 
 float shadow(float2 p, float2 pos, float radius)
 {
@@ -150,11 +149,13 @@ float4 main(Input input) : SV_Target0
     for(int i = 0; i < lightCount; i++){
         LightData l = LightBuffer[i];
 
+        if(l.enabled < 1.0) continue;
+
         float2 lightPos = l.position.xy;
         float4 lightCol = float4(1.0, 1.0, 1.0, 1.0);
         setLuminance(lightCol, 1.25);
 
-        col += drawLight(p, lightPos, lightCol, dist, 250.0, 6.0 );
+        col += drawLight(p, lightPos, lightCol, dist, 250.0, 1.0 );
 
         // Light l0;
         // l0.position = center;

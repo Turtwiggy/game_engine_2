@@ -103,6 +103,8 @@ delete_hotreload_locked_dll()
 void
 do_rebuild_dll(sdl_game_code& game_code, std::string src_dll, std::string dst_dll)
 {
+  ZoneScoped;
+
   // Rebuild the dll
   SDL_Log("Rebuild dll...");
 
@@ -173,6 +175,14 @@ GameThread()
       game_data.mouse_pos = mouse_pos;
     }
 
+    // Check for rebuild
+    if (game_code.rebuilt && game_code.valid) {
+      SDL_Log("(GameThread) game_refresh()");
+      game_code.game_refresh(&game_data);
+      game_code.game_init(&game_data);
+      game_code.rebuilt = false; // eat the rebuilt flag
+    }
+
     // run physics at fixed timesteps
     static Uint64 accu = 0;
     constexpr int physics_substep_count = 4;
@@ -197,14 +207,6 @@ GameThread()
         game_code.game_update(&game_data);
     }
 
-    // Check for rebuild
-    if (game_code.rebuilt && game_code.valid) {
-      SDL_Log("(GameThread) game_refresh()");
-      game_code.game_refresh(&game_data);
-      game_code.game_init(&game_data);
-      game_code.rebuilt = false; // eat the rebuilt flag
-    }
-
     // Ding ding! frame done. Update RenderData
     RenderData& wb = GetWriteBuffer();
     {
@@ -219,9 +221,10 @@ GameThread()
       if (game_code.valid) {
 
         // copy transforms in to RenderData.
-        const auto rend_view =
+        const auto view =
           game_data.r->view<const TransformComponent, const ColourComponent, const SpriteComponent, const LightComponent>();
-        rend_view.each([&](entt::entity e, const auto& t_c, const auto& col_c, const auto& sprite_c, const auto& light_c) {
+
+        view.each([&](entt::entity e, const auto& t_c, const auto& col_c, const auto& sprite_c, const auto& light_c) {
           wb.renderable.push_back(Renderable{
             .transform = t_c,
             .colour = col_c,
@@ -234,10 +237,12 @@ GameThread()
 
         light_view.each([&](entt::entity e, const auto& t_c, const auto& light_c) {
           if (light_c.is_emitter) {
+
+            // Center the lights
             wb.lights.push_back(Light{
-              .pos_x = t_c.pos.x,
-              .pos_y = t_c.pos.y,
-              .pos_z = t_c.pos.y,
+              .pos_x = t_c.pos.x + t_c.size.x * 0.5f,
+              .pos_y = t_c.pos.y + t_c.size.y * 0.5f,
+              .pos_z = t_c.pos.z + t_c.size.z * 0.5f,
             });
           }
         });
@@ -326,25 +331,7 @@ CreateSpritePipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT
   };
   return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
 };
-SDL_GPUGraphicsPipeline*
-CreateEmitterAndOccluderPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
-{
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
-  const ShaderInput frag_input{
-    .shaderFilename = "SpriteLightingBase.frag",
-    .samplerCount = 0,
-    .uniformBufferCount = 0,
-    .storageBufferCount = 0,
-    .storageTextureCount = 0,
-  };
-  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
-}
+/*
 SDL_GPUGraphicsPipeline*
 CreateSpriteNormalPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
 {
@@ -364,6 +351,26 @@ CreateSpriteNormalPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPL
   };
   return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
 };
+*/
+SDL_GPUGraphicsPipeline*
+CreateEmitterAndOccluderPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
+{
+  const ShaderInput vert_input{
+    .shaderFilename = "PullSpriteBatch.vert",
+    .samplerCount = 0,
+    .uniformBufferCount = 1,
+    .storageBufferCount = 1,
+    .storageTextureCount = 0,
+  };
+  const ShaderInput frag_input{
+    .shaderFilename = "SpriteLightingBase.frag",
+    .samplerCount = 0,
+    .uniformBufferCount = 0,
+    .storageBufferCount = 0,
+    .storageTextureCount = 0,
+  };
+  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
+}
 SDL_GPUGraphicsPipeline*
 CreateLightingSeedPipeline()
 {
@@ -531,8 +538,7 @@ RenderThread()
     // this texture as a target.
     const SDL_GPUTextureCreateInfo gpu_texture_info = {
       .type = SDL_GPU_TEXTURETYPE_2D,
-      .format = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
-      // .format = SDL_GPU_TEXTUREFORMAT_R32G32_FLOAT,
+      .format = SDL_GPU_TEXTUREFORMAT_R32G32_FLOAT,
       .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
       .width = w,
       .height = h,

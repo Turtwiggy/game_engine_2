@@ -28,7 +28,7 @@ struct sdl_game_code
   game_shutdown_func_t game_shutdown;
 
   std::atomic_bool valid = false;
-  std::atomic_bool rebuilt = true;
+  std::atomic_bool rebuilt = false;
 };
 
 void

@@ -54,7 +54,7 @@ game_init(GameData* data)
   camera_pos = { -7.5, 3.2, -4.45 };
 
   const auto view = r.view<const TransformComponent, const ColourComponent, const SpriteComponent>();
-  SDL_Log("renderables, steve!: %zu", view.size_hint());
+  SDL_Log("renderables: %zu", view.size_hint());
 
   // create physics world
   const auto worldId = emplace_or_replace_physics_world();
@@ -72,26 +72,27 @@ game_init(GameData* data)
   for (int i = 0; i < 100; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
     const auto rnd_y = random(rnd, 0.0f, 720.0f);
-    // const bool is_emitter = random_01(rnd) > 0.5;
-    const bool is_emitter = false;
-    const bool is_occluder = true;
-
     const auto consumer_e =
-      spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f }, false, false, is_emitter, is_occluder);
+      spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f }, false, false, false, true);
     r.emplace<ContainerReceiverComponent>(consumer_e);
     r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
   }
 
-  const auto provider_e = spawn(r, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f }, false, false);
+  const auto provider_e =
+    spawn(r, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f }, false, false, true, false);
   r.emplace<ContainerProviderComponent>(provider_e);
   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto player_e = spawn(r, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, false, false, false);
+  const auto player_e = spawn(r, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, false, true, false);
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
 
-  const auto light_e =
-    spawn(r, { 400, 100 }, { stuff_size, stuff_size }, ColourComponent{ 1.0f, 0, 0, 1.0f }, false, false, true, false);
+  for (int i = 0; i < 6; i++) {
+    const auto rnd_x = random(rnd, 550.0f, 900.0f);
+    const auto rnd_y = random(rnd, 0.0f, 720.0f);
+    const auto light_e =
+      spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, ColourComponent{ 1.0f, 0, 0, 1.0f }, false, false, true, false);
+  }
 
   SDL_Log("game_init() - done");
 };
@@ -175,9 +176,9 @@ game_update(GameData* data)
 
   // populate game's copy of ui data from the gamethread
   {
-    // auto& ui_data = data->ui_data;
-    // auto& hmm = ui_data.hmm;
-    // hmm.clear(); // .clear() is bad
+    auto& ui_data = data->ui_data;
+    auto& hmm = ui_data.hmm;
+    hmm.clear(); // .clear() is bad
     //   // const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
     //   // for (const auto& [e, t_c, col_c, inv_c] : view.each())
     //   //   hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c
