@@ -19,8 +19,9 @@ StructuredBuffer<LightData> LightBuffer : register(t2, space2);
 // https://www.reddit.com/r/sdl/comments/1ir4kq0/heads_up_about_sets_and_bindings_if_youre_using/
 cbuffer UBO : register(b0, space3)
 {
-    float2 MousePos; 
     float2 ScreenWH;
+    float border;
+    float padding;
 }
 
 struct Input
@@ -33,8 +34,10 @@ struct Input
 float V2_F16(float2 v) { return v.x + (v.y / 255.0); }
 float sceneDist(float2 pix) {
 
-    float2 uv = pix / ScreenWH;
-    float2 distTex = Scene_DistanceTexture.Sample(DistanceSampler, uv);
+    float2 lightmap_wh = ScreenWH + float2(2.0f * border, 2.0f * border);
+    float2 uv = (pix + float2(border, border)) / lightmap_wh;
+
+    float2 distTex = Scene_DistanceTexture.Sample(DistanceSampler, uv).rg; 
 
     // float dist = V2_F16(distTex.rg);
     float dist = distTex.r;
@@ -132,9 +135,9 @@ float4 main(Input input) : SV_Target0
     float2 c = iResolution.xy / 2.0;
     
     float dist = sceneDist(p);
-    // float4 hmm = float4(dist/10, dist, dist, 1.0);
+    // float4 hmm = float4(dist, dist, dist, 1.0);
     // return hmm;
-    
+
     float4 col = float4(0.0, 0.0, 0.0, 1.0);
     
     // ambient occlusion

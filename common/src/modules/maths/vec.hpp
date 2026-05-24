@@ -4,6 +4,12 @@
 
 namespace game2d {
 
+struct ivec2
+{
+  uint32_t x = 0;
+  uint32_t y = 0;
+};
+
 struct vec2
 {
   float x = 0.0;
@@ -16,6 +22,9 @@ struct vec2
   vec2 operator/(const vec2& other) const;
 
   vec2() = default;
+  vec2(uint32_t x, uint32_t y)
+    : x((float)x)
+    , y((float)y) {};
   vec2(float x, float y)
     : x(x)
     , y(y) {};
@@ -33,6 +42,8 @@ struct vec3
   float x = 0.0f;
   float y = 0.0f;
   float z = 0.0f;
+
+  vec2 xy() const { return { x, y }; }
 };
 
 } // namespace game2d

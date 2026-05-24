@@ -13,8 +13,8 @@ struct SINGLE_FrameInput : public Singleton<SINGLE_FrameInput>
   bool jump = false;
   bool pickup = false;
   bool request_gameover = false;
-  vec2 keyboard_r = { 0, 0 };
-  vec2 keyboard_l = { 0, 0 };
+  vec2 keyboard_r = { 0.0f, 0.0f };
+  vec2 keyboard_l = { 0.0f, 0.0f };
 };
 
 void

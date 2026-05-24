@@ -49,7 +49,7 @@ using namespace std::literals;
 // static constexpr Uint64 NS_PER_FIXED_TICK = 16 * 1e6; // or ~62.5 ticks per second
 static bool limit_fps = false;
 static int fps_limit = 240;
-static int window_w = 1280, window_h = 720;
+static Uint32 window_w = 1600, window_h = 900;
 
 // read/write buffers from game=>render thread
 // gamethread will GetWriteBuffer()
@@ -422,7 +422,7 @@ CreateVoronoiDistancePipeline()
   const ShaderInput frag_input{
     .shaderFilename = "SpriteLightingVoronoiDistance.frag",
     .samplerCount = 2,
-    .uniformBufferCount = 0,
+    .uniformBufferCount = 1,
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
@@ -447,6 +447,7 @@ CreateMixLightingAndScenePipeline(const SDL_GPUSampleCount sample_count = SDL_GP
   };
   return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
 };
+/*
 SDL_GPUGraphicsPipeline*
 CreateModelPipeline(const SDL_GPUSampleCount sample_count)
 {
@@ -466,11 +467,11 @@ CreateModelPipeline(const SDL_GPUSampleCount sample_count)
   };
   return create_model_pipeline(device, window, vert_input, frag_input, sample_count);
 };
-
 struct BoneData
 {
   glm::mat4 matrix = glm::mat4(1.0f);
 };
+*/
 
 template<typename T>
 SDL_GPUBuffer*
@@ -512,14 +513,17 @@ RenderThread()
   renderer_info.window = window;
   setup_renderer(renderer_info);
 
-  auto msaa = SDL_GPU_SAMPLECOUNT_4;
+  auto msaa = SDL_GPU_SAMPLECOUNT_1;
   const auto custom_texture_out = create_and_upload_gpu_texture(device, "textures/custom.png"s);
+
+  auto* quad_data_transfer_buffer = create_transfer_buffer<SpriteInstance>(1); // fullscreen quad
+  auto* quad_data_buffer = create_data_buffer<SpriteInstance>(1);
 
   auto* sprite_data_transfer_buffer = create_transfer_buffer<SpriteInstance>(SPRITE_COUNT);
   auto* sprite_data_buffer = create_data_buffer<SpriteInstance>(SPRITE_COUNT);
 
-  auto* quad_data_transfer_buffer = create_transfer_buffer<SpriteInstance>(1); // fullscreen quad
-  auto* quad_data_buffer = create_data_buffer<SpriteInstance>(1);
+  auto* litsprite_data_transfer_buffer = create_transfer_buffer<SpriteInstance>(SPRITE_COUNT);
+  auto* litsprite_data_buffer = create_data_buffer<SpriteInstance>(SPRITE_COUNT);
 
   const uint32_t MAX_LIGHTS = 32;
   auto* light_data_transfer_buffer = create_transfer_buffer<Light>(MAX_LIGHTS);
@@ -532,7 +536,12 @@ RenderThread()
   render_w = (Uint32)(1.0f * window_w);
   render_h = (Uint32)(1.0f * window_h);
 
-  const auto create_fixed_texture = [&](Uint32 w, Uint32 h) -> SDL_GPUTexture* {
+  // add padding to texture so light doesnt immediately dissapear
+  const uint32_t light_padding = 50;
+  const uint32_t light_w = window_w + (uint32_t)(2.0 * light_padding);
+  const uint32_t light_h = window_h + (uint32_t)(2.0 * light_padding);
+
+  const auto create_fixed_texture = [&](uint32_t w, uint32_t h) -> SDL_GPUTexture* {
     // The contents of this texture are undefined until data is written to the texture,
     // either via SDL_UploadToGpuTexture, or by performaing a render or compute pass with
     // this texture as a target.
@@ -608,14 +617,12 @@ RenderThread()
   // engine::Shader jump_flood;
   // engine::Shader voronoi_distance;
 
-  // const float max_dim = 4096.0f;
-  const glm::vec2 lighting_wh = { 1280, 720 };
   auto* gpu_texture_a = create_render_texture();
-  auto* gpu_texture_lighting_emitters_and_occluders = create_fixed_texture(lighting_wh.x, lighting_wh.y);
-  auto* gpu_texture_lighting_voronoi_seed = create_fixed_texture(lighting_wh.x, lighting_wh.y);
-  auto* gpu_texture_lighting_jump_flood_a = create_fixed_texture(lighting_wh.x, lighting_wh.y);
-  auto* gpu_texture_lighting_jump_flood_b = create_fixed_texture(lighting_wh.x, lighting_wh.y);
-  auto* gpu_texture_lighting_voronoi_distance = create_fixed_texture(lighting_wh.x, lighting_wh.y);
+  auto* gpu_texture_lighting_emitters_and_occluders = create_fixed_texture(light_w, light_h);
+  auto* gpu_texture_lighting_voronoi_seed = create_fixed_texture(light_w, light_h);
+  auto* gpu_texture_lighting_jump_flood_a = create_fixed_texture(light_w, light_h);
+  auto* gpu_texture_lighting_jump_flood_b = create_fixed_texture(light_w, light_h);
+  auto* gpu_texture_lighting_voronoi_distance = create_fixed_texture(light_w, light_h);
 
   SDL_Log("(RenderThread) -- done init");
   // SignalRenderThread(); // done init()
@@ -645,7 +652,7 @@ RenderThread()
     }
     const auto& renderables = game_ui_data.renderable;
     const auto& camera_pos = game_ui_data.camera_pos;
-    const auto& lights_pos = game_ui_data.lights;
+    const auto& lights = game_ui_data.lights;
 
     // grab all the events
     //
@@ -715,11 +722,11 @@ RenderThread()
         ImGui::End();
       };
       draw_tex("GpuTextureA", gpu_texture_a);
-      draw_tex("EmittersAndOccluders", gpu_texture_lighting_emitters_and_occluders);
-      draw_tex("Seed", gpu_texture_lighting_voronoi_seed);
-      draw_tex("JumpfloodA", gpu_texture_lighting_jump_flood_a);
-      draw_tex("JumpfloodB", gpu_texture_lighting_jump_flood_b);
-      draw_tex("Distance", gpu_texture_lighting_voronoi_distance);
+      // draw_tex("Occluders", gpu_texture_lighting_emitters_and_occluders);
+      // draw_tex("Seed", gpu_texture_lighting_voronoi_seed);
+      // draw_tex("JumpfloodA", gpu_texture_lighting_jump_flood_a);
+      // draw_tex("JumpfloodB", gpu_texture_lighting_jump_flood_b);
+      // draw_tex("Distance", gpu_texture_lighting_voronoi_distance);
     }
 
     // Update game ui
@@ -746,11 +753,13 @@ RenderThread()
       // float half_h = (window_h / 2.0f) / zoom;
       // const auto proj_ortho_matrix = glm::ortho(-half_w, half_w, half_h, -half_w);
 
+      const auto proj_ortho_light = glm::ortho(0.0f, (float)light_w, (float)light_h, 0.0f);
       const auto proj_ortho_matrix = glm::ortho(0.0f, (float)window_w, (float)window_h, 0.0f);
       const auto view_matrix = glm::translate(glm::mat4(1.0f), -camera_pos);
 
       const auto vp_matrix = proj_ortho_matrix * view_matrix;
       const auto vp_matrix_nopos = proj_ortho_matrix * glm::identity<glm::mat4>();
+      const auto vp_matrix_light = proj_ortho_light * view_matrix;
 
       // "One can encode multiple render passes
       // (or alternate between render and compute passes) in a single command buffer.
@@ -835,6 +844,87 @@ RenderThread()
         SDL_EndGPUCopyPass(copy_pass);
       }
 
+      // LitSprites => GPU
+      {
+        // Build sprite instance transfer
+        SpriteInstance* data_ptr = (SpriteInstance*)SDL_MapGPUTransferBuffer(device, litsprite_data_transfer_buffer, true);
+        for (Uint32 i = 0; i < SPRITE_COUNT; i += 1) {
+
+          const bool draw = i < renderables.size();
+
+          data_ptr[i].x = 0.0f;
+          data_ptr[i].y = 0.0f;
+          data_ptr[i].z = 0.0f;
+          data_ptr[i].rotation = 0.0f;
+          data_ptr[i].w = 0.0f;
+          data_ptr[i].h = 0.0f;
+          data_ptr[i].is_emitter = 0.0f;
+          data_ptr[i].is_occluder = 0.0f;
+
+          if (draw) {
+            const auto& transform = renderables[i].transform;
+
+            // Convert from worldspace to lightspace
+            const auto worldspace_to_lightspace = [&](vec2 worldspace) -> vec2 {
+              return { worldspace.x + light_padding, worldspace.y + light_padding };
+            };
+            const auto pos = worldspace_to_lightspace(transform.pos.xy());
+
+            data_ptr[i].x = pos.x;
+            data_ptr[i].y = pos.y;
+            data_ptr[i].z = 0.0f;
+            data_ptr[i].rotation = transform.rotation_radians;
+            data_ptr[i].w = transform.size.x;
+            data_ptr[i].h = transform.size.y;
+
+            const auto& light_c = renderables[i].light;
+            data_ptr[i].is_emitter = light_c.is_emitter;
+            data_ptr[i].is_occluder = light_c.is_occluder;
+          }
+
+          data_ptr[i].tex_u = 0.0f;
+          data_ptr[i].tex_v = 0.0f;
+          data_ptr[i].tex_w = 1.0f;
+          data_ptr[i].tex_h = 1.0f;
+
+          if (draw) {
+            const auto& colour = renderables[i].colour;
+            data_ptr[i].colour[0] = colour.r;
+            data_ptr[i].colour[1] = colour.g;
+            data_ptr[i].colour[2] = colour.b;
+            data_ptr[i].colour[3] = colour.a;
+
+            auto& sprite_c = renderables[i].sprite;
+            data_ptr[i].sprite_max_x = sprite_c.sprite_max_x;
+            data_ptr[i].sprite_max_y = sprite_c.sprite_max_y;
+            data_ptr[i].sprite_pos_x = sprite_c.sprite_pos_x;
+            data_ptr[i].sprite_pos_y = sprite_c.sprite_pos_y;
+            data_ptr[i].sprite_wh_x = sprite_c.sprite_wh_x;
+            data_ptr[i].sprite_wh_y = sprite_c.sprite_wh_y;
+          }
+
+          data_ptr[i].p3 = 0.0f;
+          data_ptr[i].p4 = 0.0f;
+        }
+        SDL_UnmapGPUTransferBuffer(device, litsprite_data_transfer_buffer);
+
+        // Upload instance data.
+        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buf);
+        {
+          const auto transfer_buffer_loc = SDL_GPUTransferBufferLocation{
+            .transfer_buffer = litsprite_data_transfer_buffer,
+            .offset = 0,
+          };
+          const auto gpu_buffer_region_loc = SDL_GPUBufferRegion{
+            .buffer = litsprite_data_buffer,
+            .offset = 0,
+            .size = SPRITE_COUNT * sizeof(SpriteInstance),
+          };
+          SDL_UploadToGPUBuffer(copy_pass, &transfer_buffer_loc, &gpu_buffer_region_loc, true);
+        }
+        SDL_EndGPUCopyPass(copy_pass);
+      }
+
       // Upload exactly 1 quad to the quad_data_buffer.
       {
         // Build sprite instance transfer
@@ -882,7 +972,7 @@ RenderThread()
         SDL_EndGPUCopyPass(copy_pass);
       }
 
-      // Lights => GPU
+      // Lights StructuredBuffer => GPU
       {
         Light* data_ptr = (Light*)SDL_MapGPUTransferBuffer(device, light_data_transfer_buffer, true);
         for (Uint32 i = 0; i < MAX_LIGHTS; i++) {
@@ -892,11 +982,11 @@ RenderThread()
           data_ptr[i].pos_z = 0;
           data_ptr[i].enabled = 0;
 
-          const bool draw = i < lights_pos.size();
+          const bool draw = i < lights.size();
           if (draw) {
-            data_ptr[i].pos_x = lights_pos[i].pos_x;
-            data_ptr[i].pos_y = lights_pos[i].pos_y;
-            data_ptr[i].pos_z = lights_pos[i].pos_z;
+            data_ptr[i].pos_x = lights[i].pos_x;
+            data_ptr[i].pos_y = lights[i].pos_y;
+            data_ptr[i].pos_z = lights[i].pos_z;
             data_ptr[i].enabled = 1.0f;
           }
 
@@ -940,10 +1030,10 @@ RenderThread()
         //
         cmd_buf,
         emitter_and_occluder_pipeline,
-        sprite_data_buffer,
+        litsprite_data_buffer,
         gpu_texture_lighting_emitters_and_occluders,
         renderer_info.samplers[0],
-        vp_matrix,
+        vp_matrix_light,
         { 0.0f, 0.0f, 0.0f, 0.0f },
         {},
         SPRITE_COUNT,
@@ -964,7 +1054,7 @@ RenderThread()
         nullptr);
 
       // Lighting: Jumpflood
-      const int max_dim = glm::max(lighting_wh.x, lighting_wh.y);
+      const int max_dim = glm::max(light_w, light_h);
       const int n_jumpflood_passes = (int)(glm::ceil(glm::log(max_dim) / std::log(2.0f)));
       SDL_GPUTexture* final_lighting_texture = nullptr;
       for (int i = 0; i < n_jumpflood_passes; i++) {
@@ -987,8 +1077,8 @@ RenderThread()
 
         UniformBlock jumpflood_ubo;
         jumpflood_ubo.data[0] = offset;
-        jumpflood_ubo.data[1] = lighting_wh.x;
-        jumpflood_ubo.data[2] = lighting_wh.y;
+        jumpflood_ubo.data[1] = light_w;
+        jumpflood_ubo.data[2] = light_h;
         jumpflood_ubo.data[3] = 0.0f;
         render_to_texture(
           //
@@ -1007,6 +1097,12 @@ RenderThread()
       }
 
       // Lighting: Voronoi Distance
+
+      UniformBlock voronoi_distance_ubo;
+      voronoi_distance_ubo.data[0] = render_w;
+      voronoi_distance_ubo.data[1] = render_h;
+      voronoi_distance_ubo.data[2] = 0.0f;
+      voronoi_distance_ubo.data[3] = 0.0f;
       render_to_texture(cmd_buf,
                         voronoi_distance_pipeline,
                         quad_data_buffer,
@@ -1015,14 +1111,16 @@ RenderThread()
                         vp_matrix_nopos,
                         { 0.0f, 0.0f, 0.0f, 1.0f },
                         { final_lighting_texture, gpu_texture_lighting_emitters_and_occluders },
-                        1);
+                        1,
+                        &voronoi_distance_ubo);
 
       // Output
       UniformBlock ubo_final;
-      ubo_final.data[0] = mouse_pos.x;
-      ubo_final.data[1] = mouse_pos.y;
-      ubo_final.data[2] = (float)render_w;
-      ubo_final.data[3] = (float)render_h;
+      ubo_final.data[0] = (float)render_w;
+      ubo_final.data[1] = (float)render_h;
+      ubo_final.data[2] = light_padding;
+      ubo_final.data[3] = 0.0f;
+
       render_to_swapchain(
         //
         cmd_buf,

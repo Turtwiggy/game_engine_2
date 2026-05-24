@@ -103,10 +103,10 @@ struct CommonUiData
   float game_dt = 0.0f;
   int n_controllers = 0;
 
-  vec2 keyboard_l{ 0, 0 };
-  vec2 keyboard_r{ 0, 0 };
-  vec2 controller_l{ 0, 0 };
-  vec2 controller_r{ 0, 0 };
+  vec2 keyboard_l{ 0.0f, 0.0f };
+  vec2 keyboard_r{ 0.0f, 0.0f };
+  vec2 controller_l{ 0.0f, 0.0f };
+  vec2 controller_r{ 0.0f, 0.0f };
 
   int n_contact_events = 0;
   int n_sensor_events = 0;
@@ -128,9 +128,8 @@ struct GameData
   entt::registry* r = nullptr;
   float dt = 0.0f;
   Uint64 dt_ns = 0;
-
-  vec2 mouse_pos{ 0, 0 };
-  vec2 mouse_dt{ 0, 0 };
+  vec2 mouse_pos{ 0.0f, 0.0f };
+  vec2 mouse_dt{ 0.0f, 0.0f };
   std::vector<SDL_Event> events;
 
   glm::vec3 camera_pos;

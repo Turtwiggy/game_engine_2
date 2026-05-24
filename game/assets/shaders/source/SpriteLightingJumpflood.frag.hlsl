@@ -1,4 +1,4 @@
-Texture2D<float4> Texture : register(t0, space2);
+Texture2D<float2> Texture : register(t0, space2);
 SamplerState Sampler : register(s0, space2);
 
 struct Input
@@ -20,7 +20,7 @@ cbuffer UniformBlock : register(b0, space3)
 
 float V2_F16(float2 v) { return v.x + (v.y / 255.0); }
 
-float2 main(Input input) : SV_Target0
+float4 main(Input input) : SV_Target0
 {
   float2 v_uv = input.TexCoord;
 
@@ -54,5 +54,5 @@ float2 main(Input input) : SV_Target0
     }
   }
 
-  return float2(closest_pos);
+  return float4(closest_pos, 0.0f, 1.0f);
 }

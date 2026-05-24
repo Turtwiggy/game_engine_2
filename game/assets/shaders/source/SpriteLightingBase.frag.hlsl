@@ -1,5 +1,3 @@
-// Texture2D<float4> Texture : register(t0, space2);
-// SamplerState Sampler : register(s0, space2);
 
 struct Input
 {
@@ -11,21 +9,11 @@ struct Input
   float2 IsEmitterAndIsOccluder: TEXCOORD5;
 };
 
-float2 main(Input input) : SV_Target0
+float4 main(Input input) : SV_Target0
 {
   float isEmitter = input.IsEmitterAndIsOccluder.x;
   float isOccluder = input.IsEmitterAndIsOccluder.y;
   float2 v_uv = input.TexCoord;
 
-  // return float4(v_uv.x, v_uv.y, 0.0, 1.0);
-  // if(isEmitter == 1.0){
-    //   return float4(0.0, 1.0, 0.0, 1.0);
-  // }
-
-  if(isOccluder == 1.0){
-    return float2(1.0, 1.0);
-  }
-
-  // return float4(v_uv.x, v_uv.y, 0.0, 1.0);
-  return float2(0.0, 0.0);
+  return float4(isOccluder, 0.0f, 0.0, 1.0);
 }

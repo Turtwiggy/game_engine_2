@@ -24,7 +24,6 @@ namespace game2d {
 
 static entt::registry internal_r;
 static bool refreshed = false;
-const auto screen_size = vec2(1280, 720); // todo: fix this
 static bool capture_mouse = false;
 static float camera_speed = 500.0f;
 static float mouse_sens = 0.01f;
@@ -83,7 +82,8 @@ game_init(GameData* data)
   r.emplace<ContainerProviderComponent>(provider_e);
   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto player_e = spawn(r, { 500, 450 }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, false, true, false);
+  const auto player_e =
+    spawn(r, { 500.0f, 450.0f }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, false, true, false);
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
 
@@ -93,6 +93,11 @@ game_init(GameData* data)
     const auto light_e =
       spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, ColourComponent{ 1.0f, 0, 0, 1.0f }, false, false, true, false);
   }
+
+  spawn(r, { 0.0f, 0.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
+  spawn(r, { 0.0f, 720.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
+  spawn(r, { 1280.0f, 0.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
+  spawn(r, { 1280.0f, 720.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
 
   SDL_Log("game_init() - done");
 };

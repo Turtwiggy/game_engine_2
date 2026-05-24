@@ -46,13 +46,13 @@ update_input_system(entt::registry& r, GameData* data)
   inputs.pickup = get_key_down(inputs_c, SDL_SCANCODE_RETURN);
   inputs.request_gameover = get_key_down(inputs_c, SDL_SCANCODE_KP_9);
 
-  inputs.keyboard_r = { 0, 0 };
+  inputs.keyboard_r = { 0.0f, 0.0f };
   inputs.keyboard_r.y += get_key_held(inputs_c, SDL_SCANCODE_UP) ? -1.0f : 0.0f;
   inputs.keyboard_r.y += get_key_held(inputs_c, SDL_SCANCODE_DOWN) ? 1.0f : 0.0f;
   inputs.keyboard_r.x += get_key_held(inputs_c, SDL_SCANCODE_LEFT) ? -1.0f : 0.0f;
   inputs.keyboard_r.x += get_key_held(inputs_c, SDL_SCANCODE_RIGHT) ? 1.0f : 0.0f;
 
-  inputs.keyboard_l = { 0, 0 };
+  inputs.keyboard_l = { 0.0f, 0.0f };
   inputs.keyboard_l.y += get_key_held(inputs_c, SDL_SCANCODE_W) ? -1.0f : 0.0f;
   inputs.keyboard_l.y += get_key_held(inputs_c, SDL_SCANCODE_S) ? 1.0f : 0.0f;
   inputs.keyboard_l.x += get_key_held(inputs_c, SDL_SCANCODE_A) ? -1.0f : 0.0f;
@@ -61,7 +61,7 @@ update_input_system(entt::registry& r, GameData* data)
   inputs.keyboard_l = sanetize(inputs.keyboard_l);
   inputs.keyboard_r = sanetize(inputs.keyboard_r);
 
-  data->mouse_dt = vec2{ 0, 0 };
+  data->mouse_dt = vec2{ 0.0f, 0.0f };
 
   for (const SDL_Event& evt : evts) {
 

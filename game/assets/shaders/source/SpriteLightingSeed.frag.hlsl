@@ -1,4 +1,4 @@
-Texture2D<float4> Texture : register(t0, space2);
+Texture2D<float2> Texture : register(t0, space2);
 SamplerState Sampler : register(s0, space2);
 
 struct Input
@@ -11,20 +11,13 @@ struct Input
   float2 IsEmitterAndIsOccluder: TEXCOORD5;
 };
 
-float2 F16_V2(float f) { return float2(floor(f * 255.0) / 255.0, frac(f * 255.0)); }
+// float2 F16_V2(float f) { return float2(floor(f * 255.0) / 255.0, frac(f * 255.0)); }
 
-float2 main(Input input) : SV_Target0
+float4 main(Input input) : SV_Target0
 {
   float2 v_uv = input.TexCoord;
-  float4 tex = Texture.Sample(Sampler, v_uv);
-
-  // if(tex.a > 0.0){
-    //   return float4(1.0, 1.0, 1.0, 1.0);
-  // }
-  // else {
-    //   return float4(0.0, 0.0, 0.0, 1.0);
-  // }
+  float2 tex = Texture.Sample(Sampler, v_uv).rg;
 
   // return float4(F16_V2(v_uv.x * tex.a), F16_V2(v_uv.y * tex.a));
-  return float2(v_uv.x * tex.a, v_uv.y * tex.a);
+  return float4(v_uv.x * tex.r, v_uv.y * tex.r, 0.0, 1.0);
 }
