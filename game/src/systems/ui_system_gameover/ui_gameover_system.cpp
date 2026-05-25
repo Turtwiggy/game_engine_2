@@ -1,4 +1,4 @@
-#include "pch.hpp"
+#include "pch.hpp" // IWYU pragma: keep
 
 #include "ui_gameover_components.hpp"
 

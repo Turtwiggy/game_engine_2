@@ -12,7 +12,7 @@ extern "C"
   __declspec(dllexport) void game_update(GameData* data);
   __declspec(dllexport) void game_update_ui(GameUIData* ui_data);
   __declspec(dllexport) void game_refresh(GameData* data);
-  __declspec(dllexport) void game_shutdown(const GameData* data);
+  __declspec(dllexport) void game_shutdown(GameData* data);
 }
 
 } // namespace game2d

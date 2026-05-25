@@ -124,3 +124,11 @@ cd build
 cmake -DBOX2D_SAMPLES=OFF -DBOX2D_UNIT_TESTS=OFF -DBUILD_SHARED_LIBS=ON .. -G Ninja
 cmake --build . --config Release
 ```
+
+### Shadercross
+
+Shadercross currently not on vcpkg.
+Can download a binary from the github actions.
+
+https://github.com/libsdl-org/SDL_shadercross
+https://github.com/libsdl-org/SDL_shadercross/actions

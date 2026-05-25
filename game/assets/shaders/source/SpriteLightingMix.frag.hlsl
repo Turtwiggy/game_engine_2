@@ -26,10 +26,12 @@ cbuffer UBO : register(b0, space3)
 
 struct Input
 {
-    float4 Position : SV_Position;
-    float2 TexCoord : TEXCOORD0;
-    float4 Color : TEXCOORD1;
+    float4 Data0     : TEXCOORD0;
+    float4 Data1     : TEXCOORD1;
+    float4 Data2     : TEXCOORD2;
+    float4 Data3     : TEXCOORD3;
 };
+
 
 float V2_F16(float2 v) { return v.x + (v.y / 255.0); }
 float sceneDist(float2 pix) {
@@ -122,9 +124,15 @@ float AO(float dist, float radius, float intensity)
 // https://www.shadertoy.com/view/4dfXDn
 float4 main(Input input) : SV_Target0
 {    
+    float2 v_uv = input.Data0.xy;
+    float2 v_sprite_max = input.Data0.zw;
+    float2 v_sprite_pos = input.Data1.xy;
+    float2 v_sprite_wh = input.Data1.zw;
+    float4 v_col = input.Data2;
+    float2 v_eao = input.Data3.xy;
+    
     // fragCoord : is a float2 that is between 0 > 640 on the X axis and 0 > 360 on the Y axis
     // iResolution : is a float2 with an X value of 640 and a Y value of 360
-    float2 v_uv = input.TexCoord;
     float2 viewport_wh = ScreenWH;
     float2 fragCoord = (v_uv * viewport_wh);
     float2 iResolution = viewport_wh;
@@ -169,7 +177,7 @@ float4 main(Input input) : SV_Target0
         // col += drawLight(p, l1.position, l1.colour, dist, 250.0, 6.0);
     }
 
-    float4 scene_col = Screen_SpriteTexture.Sample(SpriteSampler, input.TexCoord);
+    float4 scene_col = Screen_SpriteTexture.Sample(SpriteSampler, v_uv);
     if(all(scene_col.rgb == 0.0)){
         scene_col = float4(0.3, 0.3, 0.3, 1.0);
     }
@@ -179,7 +187,7 @@ float4 main(Input input) : SV_Target0
     float4 final_col = scene_col * lighting_col;
     return final_col;
 
-    // float3 normal_tex = Screen_NormalTexture.Sample(NormalSampler, input.TexCoord).xyz;
+    // float3 normal_tex = Screen_NormalTexture.Sample(NormalSampler, v_uv).xyz;
     // float3 normal = normalize(normal_tex * 2.0 - 1.0); // [0, 1] to [-1, 1]
 
     // // float3 frag_pos = input.Position.xyz;

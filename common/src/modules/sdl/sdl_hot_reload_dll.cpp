@@ -17,7 +17,7 @@ game_update_ui_stub(GameUIData* ui_data) {};
 void
 game_refresh_stub(GameData* data) {};
 void
-game_shutdown_stub(const GameData* data) {};
+game_shutdown_stub(GameData* data) {};
 
 bool
 copy_file(const char* src_dll_name, const char* dst_dll_name)
@@ -100,7 +100,7 @@ sdl_load_game_code(sdl_game_code& result, const std::string src_dll_name, const 
   }
 
   {
-    const auto shutdown = (void (*)(const GameData*))SDL_LoadFunction(result.game_code_dll, "game_shutdown");
+    const auto shutdown = (void (*)(GameData*))SDL_LoadFunction(result.game_code_dll, "game_shutdown");
     if (!shutdown) {
       throw SDLException("Failed to load game_shutdown() from dll");
       exit(SDL_APP_FAILURE);

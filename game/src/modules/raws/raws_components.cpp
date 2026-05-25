@@ -1,4 +1,4 @@
-#include "pch.hpp"
+#include "pch.hpp" // IWYU pragma: keep
 
 #include "game_and_engine_interop.hpp"
 #include "raws_components.hpp"
@@ -24,15 +24,16 @@ default_sprite()
 }
 
 entt::entity
-spawn(entt::registry& r,
-      const vec2 pos,
-      const vec2 size,
-      const ColourComponent colour,
-      const bool is_static,
-      const bool is_sensor,
-      const bool is_emitter,
-      const bool is_occluder)
+spawn(entt::registry& r, const SpawnConfig& data)
 {
+  const vec2 pos = data.pos;
+  const vec2 size = data.size;
+  const ColourComponent colour = data.colour;
+  const bool is_static = data.is_static;
+  const bool is_sensor = data.is_sensor;
+  const bool is_emitter = data.is_emitter;
+  const bool is_occluder = data.is_occluder;
+
   const auto world_id = SINGLE_Physics::get().worldId;
   // SDL_Log("Spawning thing at: %0.2f %0.2f", pos.x, pos.y);
 

@@ -20,14 +20,21 @@ namespace game2d {
 //           const glm::vec2& pos,
 //           const glm::vec2& size = { default_map_unit_tilesize, default_map_unit_tilesize });
 
+SpriteComponent
+default_sprite();
+
+struct SpawnConfig
+{
+  const vec2 pos;
+  const vec2 size;
+  const ColourComponent colour = { 1.0f, 1.0f, 1.0f, 1.0f };
+  const SpriteComponent sprite = default_sprite();
+  const bool is_static = false;
+  const bool is_sensor = false;
+  const bool is_emitter = false;
+  const bool is_occluder = false;
+};
 entt::entity
-spawn(entt::registry& r,
-      const vec2 pos,
-      const vec2 size,
-      const ColourComponent colour,
-      const bool is_static = false,
-      const bool is_sensor = false,
-      const bool is_emitter = false,
-      const bool is_occlude = false);
+spawn(entt::registry& r, const SpawnConfig& data);
 
 } // namespace game2d

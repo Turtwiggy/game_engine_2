@@ -15,7 +15,7 @@ struct vec2
   float x = 0.0;
   float y = 0.0;
 
-  vec2 operator+=(const vec2& other) const;
+  vec2& operator+=(const vec2& other);
   vec2 operator+(const vec2& other) const;
   vec2 operator-(const vec2& other) const;
   vec2 operator*(const vec2& other) const;

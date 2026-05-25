@@ -1,14 +1,10 @@
-#include "pch.hpp"
+#include "pch.hpp" // IWYU pragma: keep
 
 #include "game.hpp"
 
 #include "game_and_engine_interop.hpp"
 #include "modules/actors/actor_player/actor_player_components.hpp"
 #include "modules/box2d/box2d_components.hpp"
-#include "modules/box2d/box2d_helpers.hpp"
-#include "modules/camera/perspective_helpers.hpp"
-#include "modules/entt/entt_helpers.hpp"
-#include "modules/events/events_core/events_components.hpp"
 #include "modules/input/input_helpers.hpp"
 #include "modules/physics/box2d_parallel.hpp"
 #include "modules/physics/physics_components.hpp"
@@ -71,33 +67,52 @@ game_init(GameData* data)
   for (int i = 0; i < 100; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
     const auto rnd_y = random(rnd, 0.0f, 720.0f);
-    const auto consumer_e =
-      spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 0.0f }, false, false, false, true);
+
+    const auto consumer_e = spawn(r, { .pos = { rnd_x, rnd_y }, .size = { stuff_size, stuff_size }, .is_occluder = true });
     r.emplace<ContainerReceiverComponent>(consumer_e);
     r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
   }
 
-  const auto provider_e =
-    spawn(r, { rnd_0_x, 300 }, { stuff_size, stuff_size }, { 1.0f, 0.0f, 0.0f }, false, false, true, false);
+  const auto provider_e = spawn(r,
+                                {
+                                  .pos = { rnd_0_x, 300 },
+                                  .size = { stuff_size, stuff_size },
+                                  .colour = { 1.0f, 0.0f, 0.0f },
+                                  .is_emitter = true,
+                                });
   r.emplace<ContainerProviderComponent>(provider_e);
   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
-  const auto player_e =
-    spawn(r, { 500.0f, 450.0f }, { stuff_size, stuff_size }, { 0.0f, 1.0f, 1.0f }, false, false, true, false);
+  const auto player_e = spawn(r,
+                              {
+                                .pos = { 500.0f, 450.0f },
+                                .size = { stuff_size, stuff_size },
+                                .colour = { 0.0f, 1.0f, 1.0f },
+                                .is_emitter = true,
+                              });
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
 
   for (int i = 0; i < 6; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
     const auto rnd_y = random(rnd, 0.0f, 720.0f);
-    const auto light_e =
-      spawn(r, { rnd_x, rnd_y }, { stuff_size, stuff_size }, ColourComponent{ 1.0f, 0, 0, 1.0f }, false, false, true, false);
+
+    const auto light_e = spawn(r,
+                               { .pos = { rnd_x, rnd_y },
+                                 .size = { stuff_size, stuff_size },
+                                 .colour = { 1.0f, 0.0f, 0.0f, 1.0f },
+                                 .is_emitter = true });
   }
 
-  spawn(r, { 0.0f, 0.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
-  spawn(r, { 0.0f, 720.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
-  spawn(r, { 1280.0f, 0.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
-  spawn(r, { 1280.0f, 720.0f }, { stuff_size, stuff_size }, { 1.0f, 1, 0, 1.0f }, false, false, false, true);
+  spawn(r,
+        { .pos = { 0.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
+  spawn(r,
+        { .pos = { 0.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
+  spawn(
+    r, { .pos = { 1280.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
+  spawn(
+    r,
+    { .pos = { 1280.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
 
   SDL_Log("game_init() - done");
 };
@@ -109,6 +124,8 @@ game_fixed_update(GameData* data)
 
   const auto& inputs_c = SINGLE_FrameInput::get();
 
+  const auto player_input = inputs_c.keyboard_l + inputs_c.controller_l;
+
   // Apply force to first dynamic body
   {
     auto view = r.view<const PhysicsBodyComponent, const TransformComponent, const PlayerComponent>();
@@ -118,7 +135,7 @@ game_fixed_update(GameData* data)
         continue;
 
       // const auto meters_per_second = 0.1f;
-      const auto force = move_force * b2Vec2{ inputs_c.keyboard_l.x, inputs_c.keyboard_l.y };
+      const auto force = move_force * b2Vec2{ player_input.x, player_input.y };
       b2Body_ApplyLinearImpulseToCenter(pb_c.id, force, true);
 
       break;
@@ -169,6 +186,14 @@ game_update(GameData* data)
   update_input_system(r, data);
   const auto& frame_inputs_c = SINGLE_FrameInput::get();
 
+  auto& ui_data = data->ui_data;
+  // ui_data.n_controllers = n_joysticks;
+  ui_data.n_controllers = 0;
+  ui_data.keyboard_l = frame_inputs_c.keyboard_l;
+  ui_data.keyboard_r = frame_inputs_c.keyboard_r;
+  ui_data.controller_l = frame_inputs_c.controller_l;
+  ui_data.controller_r = frame_inputs_c.controller_r;
+
   // process ui data.
   const auto view = r.view<const Request_GameOver>();
   const bool gameover = view.size() > 0;
@@ -196,10 +221,6 @@ game_update_ui(GameUIData* ui_data)
 {
   ImGui::SetCurrentContext(ui_data->ctx);
   const auto& data = ui_data->ui_data;
-
-  // int controllers = 0;
-  // SDL_GetJoysticks(&controllers);
-  // ImGui::Text("n_controllers: %i", controllers);
 
   {
     auto flags = 0;
@@ -300,13 +321,15 @@ game_refresh(GameData* data)
 };
 
 void
-game_shutdown(const GameData* data)
+game_shutdown(GameData* data)
 {
   SDL_Log("(Game) game_shutdown()");
 
   internal_r.clear();
 
   physics_shutdown();
+
+  data->r = nullptr;
 }
 
 } // namespace game2d

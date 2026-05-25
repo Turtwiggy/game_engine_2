@@ -13,7 +13,7 @@ typedef void (*game_fixed_update_func_t)(GameData* data);
 typedef void (*game_update_func_t)(GameData* data);
 typedef void (*game_update_ui_func_t)(GameUIData* data);
 typedef void (*game_refresh_func_t)(GameData* data);
-typedef void (*game_shutdown_func_t)(const GameData* data);
+typedef void (*game_shutdown_func_t)(GameData* data);
 
 typedef struct sdl_game_code sdl_game_code;
 struct sdl_game_code

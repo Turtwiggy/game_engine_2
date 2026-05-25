@@ -284,12 +284,11 @@ create_2d_pipeline(SDL_GPUDevice* device,
     .multisample_state = {
       .sample_count = sample_count,
     },
-    .depth_stencil_state = {
-        .compare_op = SDL_GPU_COMPAREOP_LESS,
-        .enable_depth_test = true,
-        .enable_depth_write = true,
-    },
-
+    // .depth_stencil_state = {
+    //     .compare_op = SDL_GPU_COMPAREOP_LESS,
+    //     .enable_depth_test = true,
+    //     .enable_depth_write = true,
+    // },
     .target_info = { .color_target_descriptions = color_target_desc.data(),
                      .num_color_targets = (Uint32)color_target_desc.size(),
                     }

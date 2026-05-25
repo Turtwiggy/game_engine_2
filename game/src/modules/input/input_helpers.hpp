@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modules/maths/vec.hpp"
 #include "singleton.hpp"
 
 #include <SDL3/SDL_events.h>
@@ -18,6 +19,10 @@ struct SINGLE_Inputs : Singleton<SINGLE_Inputs>
   std::vector<SDL_Scancode> keys_down;
   std::vector<SDL_Scancode> keys_up;
   std::unordered_set<SDL_Scancode> keys_held;
+
+  vec2 mouse_dt = { 0.0f, 0.0f };
+
+  int n_joysticks = 0;
 };
 
 bool

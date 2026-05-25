@@ -1,5 +1,4 @@
-#include "pch.hpp"
-#include <SDL3/SDL_gpu.h>
+#include "pch.hpp" // IWYU pragma: keep
 
 #include "imgui_helpers.hpp"
 

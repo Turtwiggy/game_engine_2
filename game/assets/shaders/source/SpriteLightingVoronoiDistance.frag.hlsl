@@ -6,12 +6,10 @@ SamplerState Sampler_EmittersAndOccluders : register(s1, space2);
 
 struct Input
 {
-  float2 TexCoord : TEXCOORD0;
-  float4 Color : TEXCOORD1;
-  float2 SpriteMax: TEXCOORD2; 
-  float2 SpritePos: TEXCOORD3;
-  float2 SpriteWH: TEXCOORD4;
-  float2 IsEmitterAndIsOccluder: TEXCOORD5;
+  float4 Data0     : TEXCOORD0;
+  float4 Data1     : TEXCOORD1;
+  float4 Data2     : TEXCOORD2;
+  float4 Data3     : TEXCOORD3;
 };
 
 cbuffer UniformBlock : register(b0, space3)
@@ -26,7 +24,13 @@ float2 F16_V2(float f) { return float2(floor(f * 255.0) / 255.0, frac(f * 255.0)
 float4 main(Input input) : SV_Target0
 // float2 main(Input input) : SV_Target0
 {
-  float2 v_uv = input.TexCoord;
+  float2 v_uv = input.Data0.xy;
+  float2 v_sprite_max = input.Data0.zw;
+  float2 v_sprite_pos = input.Data1.xy;
+  float2 v_sprite_wh = input.Data1.zw;
+  float4 v_col = input.Data2;
+  float2 v_eao = input.Data3.xy;
+  
   float2 jfuv = Texture_Jumpflood.Sample(Sampler_Jumpflood, v_uv).rg;
 
   // float2 jumpflood = float2(V2_F16(jfuv.rg),V2_F16(jfuv.ba));

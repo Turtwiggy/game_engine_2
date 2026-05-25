@@ -1,4 +1,4 @@
-#include "pch.hpp"
+#include "pch.hpp" // IWYU pragma: keep
 
 #include "event_coll_player_provider_helpers.hpp"
 

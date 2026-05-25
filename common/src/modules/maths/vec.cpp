@@ -4,10 +4,12 @@
 
 namespace game2d {
 
-vec2
-vec2::operator+=(const vec2& other) const
+vec2&
+vec2::operator+=(const vec2& other)
 {
-  return { x + other.x, y + other.y };
+  x += other.x;
+  y += other.y;
+  return *this;
 };
 
 vec2

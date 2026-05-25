@@ -1,10 +1,7 @@
-#include "pch.hpp"
+#include "pch.hpp" // IWYU pragma: keep
 
 #include "game_and_engine_interop.hpp"
 #include "imgui_helpers.hpp"
-#include "modules/models/model_helpers.hpp"
-#include "modules/models_animations/model_animation_components.hpp"
-#include "modules/models_animations/model_animation_helpers.hpp"
 #include "modules/renderer/renderer_helpers.hpp"
 #include "modules/sdl/sdl_exception.hpp"
 #include "modules/sdl/sdl_hot_reload_dll.hpp"
@@ -218,7 +215,7 @@ GameThread()
       wb.lights.clear();
       wb.ui_data.hmm.clear();
 
-      if (game_code.valid) {
+      if (game_code.valid && game_data.r != nullptr) {
 
         // copy transforms in to RenderData.
         const auto view =
@@ -293,16 +290,17 @@ RecompileShaders()
 // make sure that e.g. the samplerCount in ShaderInput matches the expected Samplers in the shader.
 //
 
+const ShaderInput pull_vert_input{
+  .shaderFilename = "PullSpriteBatch.vert",
+  .samplerCount = 0,
+  .uniformBufferCount = 1,
+  .storageBufferCount = 1,
+  .storageTextureCount = 0,
+};
+
 SDL_GPUGraphicsPipeline*
 CreateErrorPipeline()
 {
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
   const ShaderInput frag_input{
     .shaderFilename = "SolidColorInput.frag",
     .samplerCount = 0,
@@ -310,18 +308,11 @@ CreateErrorPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
+  return create_2d_pipeline(device, window, pull_vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
 };
 SDL_GPUGraphicsPipeline*
 CreateSpritePipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
 {
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
   const ShaderInput frag_input{
     .shaderFilename = "SpriteSheet.frag",
     .samplerCount = 1,
@@ -329,39 +320,11 @@ CreateSpritePipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
+  return create_2d_pipeline(device, window, pull_vert_input, frag_input, sample_count);
 };
-/*
-SDL_GPUGraphicsPipeline*
-CreateSpriteNormalPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
-{
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
-  const ShaderInput frag_input{
-    .shaderFilename = "SpriteSheetNormals.frag",
-    .samplerCount = 1,
-    .uniformBufferCount = 0,
-    .storageBufferCount = 0,
-    .storageTextureCount = 0,
-  };
-  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
-};
-*/
 SDL_GPUGraphicsPipeline*
 CreateEmitterAndOccluderPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
 {
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
   const ShaderInput frag_input{
     .shaderFilename = "SpriteLightingBase.frag",
     .samplerCount = 0,
@@ -369,18 +332,11 @@ CreateEmitterAndOccluderPipeline(const SDL_GPUSampleCount sample_count = SDL_GPU
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
+  return create_2d_pipeline(device, window, pull_vert_input, frag_input, sample_count);
 }
 SDL_GPUGraphicsPipeline*
 CreateLightingSeedPipeline()
 {
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
   const ShaderInput frag_input{
     .shaderFilename = "SpriteLightingSeed.frag",
     .samplerCount = 1,
@@ -388,18 +344,11 @@ CreateLightingSeedPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
+  return create_2d_pipeline(device, window, pull_vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
 }
 SDL_GPUGraphicsPipeline*
 CreateJumpfloodPipeline()
 {
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
   const ShaderInput frag_input{
     .shaderFilename = "SpriteLightingJumpflood.frag",
     .samplerCount = 1,
@@ -407,18 +356,11 @@ CreateJumpfloodPipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
+  return create_2d_pipeline(device, window, pull_vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
 }
 SDL_GPUGraphicsPipeline*
 CreateVoronoiDistancePipeline()
 {
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
   const ShaderInput frag_input{
     .shaderFilename = "SpriteLightingVoronoiDistance.frag",
     .samplerCount = 2,
@@ -426,18 +368,11 @@ CreateVoronoiDistancePipeline()
     .storageBufferCount = 0,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
+  return create_2d_pipeline(device, window, pull_vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
 }
 SDL_GPUGraphicsPipeline*
 CreateMixLightingAndScenePipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
 {
-  const ShaderInput vert_input{
-    .shaderFilename = "PullSpriteBatch.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
   const ShaderInput frag_input{
     .shaderFilename = "SpriteLightingMix.frag",
     .samplerCount = 2,
@@ -445,33 +380,8 @@ CreateMixLightingAndScenePipeline(const SDL_GPUSampleCount sample_count = SDL_GP
     .storageBufferCount = 1,
     .storageTextureCount = 0,
   };
-  return create_2d_pipeline(device, window, vert_input, frag_input, sample_count);
+  return create_2d_pipeline(device, window, pull_vert_input, frag_input, sample_count);
 };
-/*
-SDL_GPUGraphicsPipeline*
-CreateModelPipeline(const SDL_GPUSampleCount sample_count)
-{
-  const ShaderInput vert_input{
-    .shaderFilename = "ModelAnimated.vert",
-    .samplerCount = 0,
-    .uniformBufferCount = 1,
-    .storageBufferCount = 1,
-    .storageTextureCount = 0,
-  };
-  const ShaderInput frag_input{
-    .shaderFilename = "ModelAnimated.frag",
-    .samplerCount = 0,
-    .uniformBufferCount = 0,
-    .storageBufferCount = 0,
-    .storageTextureCount = 0,
-  };
-  return create_model_pipeline(device, window, vert_input, frag_input, sample_count);
-};
-struct BoneData
-{
-  glm::mat4 matrix = glm::mat4(1.0f);
-};
-*/
 
 template<typename T>
 SDL_GPUBuffer*

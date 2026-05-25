@@ -1,8 +1,8 @@
-#include "pch.hpp"
-
 #include "input_system.hpp"
 
 #include "modules/input/input_helpers.hpp"
+#include "modules/maths/helpers.hpp"
+#include "modules/maths/vec.hpp"
 
 namespace game2d {
 
@@ -29,7 +29,7 @@ sanetize(vec2 v)
 };
 
 void
-update_input_system(entt::registry& r, GameData* data)
+update_input_system(entt::registry& r, const GameData* data)
 {
 #if defined(_DEBUG)
   // ZoneScoped;
@@ -38,6 +38,7 @@ update_input_system(entt::registry& r, GameData* data)
   const auto evts = data->events;
   auto& inputs_c = SINGLE_Inputs::get();
   generate_button_state(evts, inputs_c);
+  inputs_c.mouse_dt = { 0.0f, 0.0f };
 
   auto& inputs = SINGLE_FrameInput::get();
   inputs.reset();
@@ -61,7 +62,7 @@ update_input_system(entt::registry& r, GameData* data)
   inputs.keyboard_l = sanetize(inputs.keyboard_l);
   inputs.keyboard_r = sanetize(inputs.keyboard_r);
 
-  data->mouse_dt = vec2{ 0.0f, 0.0f };
+  // data->mouse_dt = vec2{ 0.0f, 0.0f };
 
   for (const SDL_Event& evt : evts) {
 
@@ -92,7 +93,7 @@ update_input_system(entt::registry& r, GameData* data)
     if (evt.type == SDL_EVENT_MOUSE_MOTION) {
       SDL_MouseMotionEvent m_evt = evt.motion;
       // data->mouse_pos = { m_evt.x, m_evt.y };
-      data->mouse_dt = { m_evt.xrel, m_evt.yrel };
+      inputs_c.mouse_dt = { m_evt.xrel, m_evt.yrel };
     }
 
     // joysticks
@@ -113,19 +114,12 @@ update_input_system(entt::registry& r, GameData* data)
     }
   }
 
-  auto& ui_data = data->ui_data;
-  ui_data.keyboard_l = inputs.keyboard_l;
-  ui_data.keyboard_r = inputs.keyboard_r;
-
-  /*
   int n_joysticks = 0;
   auto* joysticks = SDL_GetJoysticks(&n_joysticks);
-  {
-    // SDL_free(joysticks);
-  }
-  ui_data.n_controllers = n_joysticks;
-  ui_data.controller_l = { 0, 0 };
-  ui_data.controller_r = { 0, 0 };
+
+  inputs_c.n_joysticks = n_joysticks;
+  inputs.controller_l = vec2{ 0.0f, 0.0f };
+  inputs.controller_r = vec2{ 0.0f, 0.0f };
 
   for (int i = 0; i < n_joysticks; i++) {
     const SDL_JoystickID id = joysticks[i];
@@ -142,57 +136,41 @@ update_input_system(entt::registry& r, GameData* data)
     const auto ry_nrm = scale(ry_raw, -32768, 32767, -1.0f, 1.0f);
     const vec2 inp_l = vec2{ lx_nrm, ly_nrm };
     const vec2 inp_r = vec2{ rx_nrm, ry_nrm };
-    controller_l = inp_l;
-    controller_r = inp_r;
 
-    const float epsilon = 0.01f;
-    if (abs(controller_l.x) < epsilon)
-      controller_l.x = 0.0f;
-    if (abs(controller_l.y) < epsilon)
-      controller_l.y = 0.0f;
-    if (abs(controller_r.x) < epsilon)
-      controller_r.x = 0.0f;
-    if (abs(controller_r.y) < epsilon)
-      controller_r.y = 0.0f;
+    inputs.controller_l = inp_l;
+    inputs.controller_r = inp_r;
+
+    const float deadzone = 0.05f;
+
+    if (abs(inputs.controller_l.x) < deadzone)
+      inputs.controller_l.x = 0.0f;
+    if (abs(inputs.controller_l.y) < deadzone)
+      inputs.controller_l.y = 0.0f;
+    if (abs(inputs.controller_r.x) < deadzone)
+      inputs.controller_r.x = 0.0f;
+    if (abs(inputs.controller_r.y) < deadzone)
+      inputs.controller_r.y = 0.0f;
 
     // generate inputs for one button.
-    static bool s_press = false;
-    static bool s_held_last_frame = false;
-    static bool s_held = false;
-    static bool s_release = false;
-    s_press = false;
-    s_release = false;
-    s_held = SDL_GetJoystickButton(instance, SDL_GAMEPAD_BUTTON_SOUTH);
-    if (s_held_last_frame && !s_held)
-      s_release = true;
-    if (!s_held_last_frame && s_held)
-      s_press = true;
-    s_held_last_frame = s_held;
-    if (s_press)
-      SDL_Log("south button pressed");
-    // jump |= s_press;
-    pickup |= s_press;
+    // static bool s_press = false;
+    // static bool s_held_last_frame = false;
+    // static bool s_held = false;
+    // static bool s_release = false;
+    // s_press = false;
+    // s_release = false;
+    // s_held = SDL_GetJoystickButton(instance, SDL_GAMEPAD_BUTTON_SOUTH);
+    // if (s_held_last_frame && !s_held)
+    //   s_release = true;
+    // if (!s_held_last_frame && s_held)
+    //   s_press = true;
+    // s_held_last_frame = s_held;
+    // if (s_press)
+    //   SDL_Log("south button pressed");
 
-    ui_data.controller_l.x = lx_nrm;
-    ui_data.controller_l.y = ly_nrm;
-    ui_data.controller_r.x = rx_nrm;
-    ui_data.controller_r.y = ry_nrm;
     break;
   }
 
   SDL_free(joysticks);
-  */
-
-  // l_input = keyboard_l + controller_l;
-  // r_input = keyboard_r + controller_r;
-
-  // clamp the inputs
-  // l_input.x = std::clamp(l_input.x, -1.0f, 1.0f);
-  // l_input.y = std::clamp(l_input.y, -1.0f, 1.0f);
-  // r_input.x = std::clamp(r_input.x, -1.0f, 1.0f);
-  // r_input.y = std::clamp(r_input.y, -1.0f, 1.0f);
-
-  //
 }
 
 } // namespace game2d
