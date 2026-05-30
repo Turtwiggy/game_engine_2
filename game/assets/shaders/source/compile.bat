@@ -11,7 +11,7 @@ for %%f in (*.vert.hlsl) do (
     if exist "%%f" (
         shadercross "%%f" -o "../compiled/SPIRV/%%~nf.spv"
         if errorlevel 1 set FAILED=1
-        shadercross "%%f" -o "../compiled/MSL/%%~nf.msl"
+        shadercross "%%f" -o "../compiled/MSL/%%~nf.msl" --msl-version 3.0.0
         if errorlevel 1 set FAILED=1
         shadercross "%%f" -o "../compiled/DXIL/%%~nf.dxil"
         if errorlevel 1 set FAILED=1
@@ -23,7 +23,7 @@ for %%f in (*.frag.hlsl) do (
     if exist "%%f" (
         shadercross "%%f" -o "../compiled/SPIRV/%%~nf.spv"
         if errorlevel 1 set FAILED=1
-        shadercross "%%f" -o "../compiled/MSL/%%~nf.msl"
+        shadercross "%%f" -o "../compiled/MSL/%%~nf.msl" --msl-version 3.0.0
         if errorlevel 1 set FAILED=1
         shadercross "%%f" -o "../compiled/DXIL/%%~nf.dxil"
         if errorlevel 1 set FAILED=1
@@ -35,7 +35,7 @@ for %%f in (*.comp.hlsl) do (
     if exist "%%f" (
         shadercross "%%f" -o "../compiled/SPIRV/%%~nf.spv"
         if errorlevel 1 set FAILED=1
-        shadercross "%%f" -o "../compiled/MSL/%%~nf.msl"
+        shadercross "%%f" -o "../compiled/MSL/%%~nf.msl" --msl-version 3.0.0
         if errorlevel 1 set FAILED=1
         shadercross "%%f" -o "../compiled/DXIL/%%~nf.dxil"
         if errorlevel 1 set FAILED=1
