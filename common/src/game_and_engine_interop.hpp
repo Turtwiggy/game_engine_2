@@ -3,6 +3,7 @@
 #include "modules/maths/vec.hpp"
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_gpu.h>
 #include <box2d/box2d.h>
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
@@ -33,12 +34,13 @@ struct ColourComponent
 
 struct SpriteComponent
 {
-  float sprite_max_x = 0.0f;
-  float sprite_max_y = 0.0f;
-  float sprite_pos_x = 0.0f;
-  float sprite_pos_y = 0.0f;
-  float sprite_wh_x = 0.0f;
-  float sprite_wh_y = 0.0f;
+  int sprite_max_x = 0;
+  int sprite_max_y = 0;
+  int sprite_pos_x = 0;
+  int sprite_pos_y = 0;
+  int sprite_wh_x = 1;
+  int sprite_wh_y = 1;
+  int spritesheet_idx = 0;
 };
 
 struct LightComponent
@@ -125,6 +127,8 @@ struct CommonUiData
 // data owned by the GameThread
 struct GameData
 {
+  SDL_GPUDevice* device = nullptr;
+
   entt::registry* r = nullptr;
   float dt = 0.0f;
   Uint64 dt_ns = 0;
@@ -135,6 +139,8 @@ struct GameData
   glm::vec3 camera_pos;
 
   CommonUiData ui_data;
+
+  std::vector<SDL_GPUTexture*> unprocessed_textures;
 };
 
 // intermediate data gamethread <=> renderthread
@@ -151,6 +157,8 @@ struct RenderData
   std::vector<Renderable> renderable;
   std::vector<Light> lights;
   CommonUiData ui_data;
+
+  std::vector<SDL_GPUTexture*> intermediate_textures;
 };
 
 // data owned by the RenderThread
@@ -163,6 +171,9 @@ struct GameUIData
   std::vector<Renderable> renderable;
   std::vector<Light> lights;
   CommonUiData ui_data;
+
+  int textures_to_free = 0;
+  std::vector<SDL_GPUTexture*> renderthread_owned_textures;
 };
 
 } // namespace game2d

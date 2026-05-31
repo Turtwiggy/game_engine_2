@@ -67,6 +67,7 @@ GameData game_data;
 static std::mutex game_ui_mtx;
 static GameUIData game_ui_data;
 static sdl_game_code game_code;
+uint32_t n_sprite_pipeline_textures = 0;
 
 static EventQueue<SDL_Event> game_event_queue;
 static EventQueue<SDL_Event> rend_event_queue;
@@ -124,6 +125,9 @@ do_rebuild_dll(sdl_game_code& game_code, std::string src_dll, std::string dst_dl
   if (result == 0) {
     SDL_Log("Build success...");
     game_code.game_shutdown(&game_data);
+
+    // Notify the render thread that all the game textures needs freeing.
+    game_ui_data.textures_to_free = (int)game_ui_data.renderthread_owned_textures.size();
 
     sdl_unload_game_code(game_code);
     delete_hotreload_locked_dll();
@@ -248,6 +252,14 @@ GameThread()
         wb.camera_pos = game_data.camera_pos;
         wb.ui_data = game_data.ui_data;
         wb.ui_data.game_dt = dt;
+
+        // move unprocessed <=> intermediate
+        if (!game_data.unprocessed_textures.empty()) {
+          wb.intermediate_textures.clear();
+          wb.intermediate_textures.insert(
+            wb.intermediate_textures.end(), game_data.unprocessed_textures.begin(), game_data.unprocessed_textures.end());
+          game_data.unprocessed_textures.clear();
+        }
       }
     }
 
@@ -268,7 +280,7 @@ typedef struct SpriteInstance
   float sprite_max_x, sprite_max_y;
   float sprite_pos_x, sprite_pos_y;
   float sprite_wh_x, sprite_wh_y;
-  float p3, p4;
+  float spritesheet_idx, p4;
 } SpriteInstance;
 
 int
@@ -310,12 +322,13 @@ CreateErrorPipeline()
   };
   return create_2d_pipeline(device, window, pull_vert_input, frag_input, SDL_GPU_SAMPLECOUNT_1);
 };
+
 SDL_GPUGraphicsPipeline*
-CreateSpritePipeline(const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
+CreateSpritePipeline(const uint32_t n_textures, const SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1)
 {
   const ShaderInput frag_input{
     .shaderFilename = "SpriteSheet.frag",
-    .samplerCount = 1,
+    .samplerCount = n_textures,
     .uniformBufferCount = 0,
     .storageBufferCount = 0,
     .storageTextureCount = 0,
@@ -457,7 +470,7 @@ RenderThread()
     // this texture as a target.
     const SDL_GPUTextureCreateInfo gpu_texture_info = {
       .type = SDL_GPU_TEXTURETYPE_2D,
-      .format = SDL_GPU_TEXTUREFORMAT_R32G32_FLOAT,
+      .format = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM,
       .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
       .width = w,
       .height = h,
@@ -513,7 +526,7 @@ RenderThread()
     return gpu_texture;
   };
 
-  auto* sprite_pipeline = CreateSpritePipeline();
+  auto* sprite_pipeline = CreateSpritePipeline(0);
   auto* emitter_and_occluder_pipeline = CreateEmitterAndOccluderPipeline();
   auto* seed_pipeline = CreateLightingSeedPipeline();
   auto* jumpflood_pipeline = CreateJumpfloodPipeline();
@@ -559,6 +572,15 @@ RenderThread()
       game_ui_data.ui_data = read_buffer.ui_data;
       game_ui_data.camera_pos = read_buffer.camera_pos;
       game_ui_data.lights = read_buffer.lights;
+
+      if (!read_buffer.intermediate_textures.empty()) {
+        auto amount = read_buffer.intermediate_textures.size();
+        SDL_Log("Moved %zu textures from (intermediate=>renderthread)", amount);
+        auto& c = game_ui_data.renderthread_owned_textures;
+        auto& i = read_buffer.intermediate_textures;
+        c.insert(c.end(), i.begin(), i.end());
+        i.clear();
+      }
     }
     const auto& renderables = game_ui_data.renderable;
     const auto& camera_pos = game_ui_data.camera_pos;
@@ -580,10 +602,12 @@ RenderThread()
       wants_to_rebuild_shaders |= rebuild_shaders;
       if (wants_to_rebuild_shaders) {
         rebuild_shaders = false;
+        n_sprite_pipeline_textures = 0; // reset it
 
         // releasing and recreate the fill pipeline (which uses the updated shaders)
         SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
         SDL_ReleaseGPUGraphicsPipeline(device, emitter_and_occluder_pipeline);
+        SDL_ReleaseGPUGraphicsPipeline(device, jumpflood_pipeline);
         SDL_ReleaseGPUGraphicsPipeline(device, seed_pipeline);
         SDL_ReleaseGPUGraphicsPipeline(device, mix_pipeline);
 
@@ -595,12 +619,24 @@ RenderThread()
           jumpflood_pipeline = CreateErrorPipeline();
           mix_pipeline = CreateErrorPipeline();
         } else if (result == 0) {
-          sprite_pipeline = CreateSpritePipeline();
+          sprite_pipeline = CreateSpritePipeline(0);
           emitter_and_occluder_pipeline = CreateEmitterAndOccluderPipeline();
           seed_pipeline = CreateLightingSeedPipeline();
           jumpflood_pipeline = CreateJumpfloodPipeline();
           mix_pipeline = CreateMixLightingAndScenePipeline();
         }
+      }
+    }
+
+    // Free textures if rebuilt
+    {
+      auto& game_texs = game_ui_data.renderthread_owned_textures;
+      if (game_ui_data.textures_to_free > 0) {
+        SDL_Log("(RenderThread) Freeing %i game_texture", game_ui_data.textures_to_free);
+        auto end_it = game_texs.begin() + game_ui_data.textures_to_free;
+        std::for_each(game_texs.begin(), end_it, [](SDL_GPUTexture* tex) { SDL_ReleaseGPUTexture(device, tex); });
+        game_texs.erase(game_texs.begin(), end_it);
+        game_ui_data.textures_to_free = 0;
       }
     }
 
@@ -625,13 +661,20 @@ RenderThread()
 
       ImGui::End();
 
-      const auto draw_tex = [](auto name, auto tex) {
+      const auto draw_tex = [](auto name, SDL_GPUTexture* tex) {
         ImGui::Begin(name);
         const auto wh = ImGui::GetContentRegionAvail();
         ImGui::Image((ImTextureID)(intptr_t)tex, wh);
         ImGui::End();
       };
       draw_tex("GpuTextureA", gpu_texture_a);
+
+      // auto& r_tex = game_ui_data.renderthread_owned_textures;
+      // for (int i = 0; i < r_tex.size(); i++) {
+      //   auto& tex = r_tex[i];
+      //   draw_tex(std::format("GameTex {}", i).c_str(), tex);
+      // }
+
       // draw_tex("Occluders", gpu_texture_lighting_emitters_and_occluders);
       // draw_tex("Seed", gpu_texture_lighting_voronoi_seed);
       // draw_tex("JumpfloodA", gpu_texture_lighting_jump_flood_a);
@@ -671,6 +714,21 @@ RenderThread()
       const auto vp_matrix_nopos = proj_ortho_matrix * glm::identity<glm::mat4>();
       const auto vp_matrix_light = proj_ortho_light * view_matrix;
 
+      auto sampler = renderer_info.samplers[0]; // nearest
+      auto textures = std::vector<SDL_GPUTexture*>{ custom_texture_out.texture };
+
+      // add any texture the game has added (but now owned by renderthread)
+      const auto& tex = game_ui_data.renderthread_owned_textures;
+      textures.insert(textures.end(), tex.begin(), tex.end());
+
+      // need to recreate sprite pipeline.
+      if (n_sprite_pipeline_textures != textures.size()) {
+        SDL_Log("Recreating sprite pipeline with textures: %zu", textures.size());
+        SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
+        sprite_pipeline = CreateSpritePipeline((uint32_t)textures.size());
+        n_sprite_pipeline_textures = (uint32_t)textures.size();
+      }
+
       // "One can encode multiple render passes
       // (or alternate between render and compute passes) in a single command buffer.
       // Render passes can render to up to four color textures and one depth texture simultaneously."
@@ -696,11 +754,12 @@ RenderThread()
           data_ptr[i].h = 0.0f;
           data_ptr[i].is_emitter = 0.0f;
           data_ptr[i].is_occluder = 0.0f;
+          data_ptr[i].spritesheet_idx = 0;
 
           if (draw) {
             const auto& transform = renderables[i].transform;
-            data_ptr[i].x = transform.pos.x;
-            data_ptr[i].y = transform.pos.y;
+            data_ptr[i].x = (int)transform.pos.x; // clamp pixel art to ints?
+            data_ptr[i].y = (int)transform.pos.y;
             data_ptr[i].z = 0.0f;
             data_ptr[i].rotation = transform.rotation_radians;
             data_ptr[i].w = transform.size.x;
@@ -715,6 +774,7 @@ RenderThread()
           data_ptr[i].tex_v = 0.0f;
           data_ptr[i].tex_w = 1.0f;
           data_ptr[i].tex_h = 1.0f;
+          data_ptr[i].spritesheet_idx = 0;
 
           if (draw) {
             const auto& colour = renderables[i].colour;
@@ -724,15 +784,15 @@ RenderThread()
             data_ptr[i].colour[3] = colour.a;
 
             auto& sprite_c = renderables[i].sprite;
-            data_ptr[i].sprite_max_x = sprite_c.sprite_max_x;
-            data_ptr[i].sprite_max_y = sprite_c.sprite_max_y;
-            data_ptr[i].sprite_pos_x = sprite_c.sprite_pos_x;
-            data_ptr[i].sprite_pos_y = sprite_c.sprite_pos_y;
-            data_ptr[i].sprite_wh_x = sprite_c.sprite_wh_x;
-            data_ptr[i].sprite_wh_y = sprite_c.sprite_wh_y;
+            data_ptr[i].sprite_max_x = (float)sprite_c.sprite_max_x;
+            data_ptr[i].sprite_max_y = (float)sprite_c.sprite_max_y;
+            data_ptr[i].sprite_pos_x = (float)sprite_c.sprite_pos_x;
+            data_ptr[i].sprite_pos_y = (float)sprite_c.sprite_pos_y;
+            data_ptr[i].sprite_wh_x = (float)sprite_c.sprite_wh_x;
+            data_ptr[i].sprite_wh_y = (float)sprite_c.sprite_wh_y;
+            data_ptr[i].spritesheet_idx = sprite_c.spritesheet_idx;
           }
 
-          data_ptr[i].p3 = 0.0f;
           data_ptr[i].p4 = 0.0f;
         }
         SDL_UnmapGPUTransferBuffer(device, sprite_data_transfer_buffer);
@@ -797,6 +857,14 @@ RenderThread()
           data_ptr[i].tex_w = 1.0f;
           data_ptr[i].tex_h = 1.0f;
 
+          data_ptr[i].sprite_max_x = 0;
+          data_ptr[i].sprite_max_y = 0;
+          data_ptr[i].sprite_pos_x = 0;
+          data_ptr[i].sprite_pos_y = 0;
+          data_ptr[i].sprite_wh_x = 0;
+          data_ptr[i].sprite_wh_y = 0;
+          data_ptr[i].spritesheet_idx = 0;
+
           if (draw) {
             const auto& colour = renderables[i].colour;
             data_ptr[i].colour[0] = colour.r;
@@ -805,15 +873,15 @@ RenderThread()
             data_ptr[i].colour[3] = colour.a;
 
             auto& sprite_c = renderables[i].sprite;
-            data_ptr[i].sprite_max_x = sprite_c.sprite_max_x;
-            data_ptr[i].sprite_max_y = sprite_c.sprite_max_y;
-            data_ptr[i].sprite_pos_x = sprite_c.sprite_pos_x;
-            data_ptr[i].sprite_pos_y = sprite_c.sprite_pos_y;
-            data_ptr[i].sprite_wh_x = sprite_c.sprite_wh_x;
-            data_ptr[i].sprite_wh_y = sprite_c.sprite_wh_y;
+            data_ptr[i].sprite_max_x = (float)sprite_c.sprite_max_x;
+            data_ptr[i].sprite_max_y = (float)sprite_c.sprite_max_y;
+            data_ptr[i].sprite_pos_x = (float)sprite_c.sprite_pos_x;
+            data_ptr[i].sprite_pos_y = (float)sprite_c.sprite_pos_y;
+            data_ptr[i].sprite_wh_x = (float)sprite_c.sprite_wh_x;
+            data_ptr[i].sprite_wh_y = (float)sprite_c.sprite_wh_y;
           }
 
-          data_ptr[i].p3 = 0.0f;
+          data_ptr->spritesheet_idx = 0;
           data_ptr[i].p4 = 0.0f;
         }
         SDL_UnmapGPUTransferBuffer(device, litsprite_data_transfer_buffer);
@@ -861,7 +929,7 @@ RenderThread()
         data_ptr[0].sprite_pos_y = 0;
         data_ptr[0].sprite_wh_x = 0;
         data_ptr[0].sprite_wh_y = 0;
-        data_ptr[0].p3 = 0.0f;
+        data_ptr[0].spritesheet_idx = 0;
         data_ptr[0].p4 = 0.0f;
         SDL_UnmapGPUTransferBuffer(device, quad_data_transfer_buffer);
 
@@ -921,47 +989,56 @@ RenderThread()
         SDL_EndGPUCopyPass(copy_pass);
       }
 
-      // render the sprites to a texture
-      render_to_texture(
-        //
-        cmd_buf,
-        sprite_pipeline,
-        sprite_data_buffer,
-        gpu_texture_a,
-        renderer_info.samplers[0],
-        vp_matrix,
-        { 0.0f, 0.0f, 0.0f, 1.0f },
-        { custom_texture_out.texture },
-        SPRITE_COUNT,
-        nullptr);
+      // sprites
+      {
+        const RenderToTextureInput sprite_input{
+          .cmd_buf = cmd_buf,
+          .pipeline = sprite_pipeline,
+          .data_buffer = sprite_data_buffer,
+          .texture = gpu_texture_a,
+          .vp_matrix = vp_matrix,
+          .clear_col = { 0.0f, 0.0f, 0.0f, 1.0f },
+          .sampler = sampler,
+          .sampled_textures = textures,
+          .SPRITE_COUNT = SPRITE_COUNT,
+          .ubo = nullptr,
+        };
+        render_to_texture(sprite_input);
+      }
 
-      // render emitters and occluders
-      render_to_texture(
-        //
-        cmd_buf,
-        emitter_and_occluder_pipeline,
-        litsprite_data_buffer,
-        gpu_texture_lighting_emitters_and_occluders,
-        renderer_info.samplers[0],
-        vp_matrix_light,
-        { 0.0f, 0.0f, 0.0f, 0.0f },
-        {},
-        SPRITE_COUNT,
-        nullptr);
+      // emitters and occluders
+      {
+        const RenderToTextureInput eao_input{
+          .cmd_buf = cmd_buf,
+          .pipeline = emitter_and_occluder_pipeline,
+          .data_buffer = litsprite_data_buffer,
+          .texture = gpu_texture_lighting_emitters_and_occluders,
+          .vp_matrix = vp_matrix_light,
+          .clear_col = { 0.0f, 0.0f, 0.0f, 0.0f },
+          .sampler = nullptr,
+          .sampled_textures = {},
+          .SPRITE_COUNT = SPRITE_COUNT,
+          .ubo = nullptr,
+        };
+        render_to_texture(eao_input);
+      }
 
       // Lighting: The Seed
-      render_to_texture(
-        //
-        cmd_buf,
-        seed_pipeline,
-        quad_data_buffer,
-        gpu_texture_lighting_voronoi_seed,
-        renderer_info.samplers[0],
-        vp_matrix_nopos,
-        { 0.0f, 0.0f, 0.0f, 1.0f },
-        { gpu_texture_lighting_emitters_and_occluders },
-        1,
-        nullptr);
+      {
+        const RenderToTextureInput seed_input{
+          .cmd_buf = cmd_buf,
+          .pipeline = seed_pipeline,
+          .data_buffer = quad_data_buffer,
+          .texture = gpu_texture_lighting_voronoi_seed,
+          .vp_matrix = vp_matrix_nopos,
+          .clear_col = { 0.0f, 0.0f, 0.0f, 0.0f },
+          .sampler = renderer_info.samplers[0],
+          .sampled_textures = { gpu_texture_lighting_emitters_and_occluders },
+          .SPRITE_COUNT = 1,
+          .ubo = nullptr,
+        };
+        render_to_texture(seed_input);
+      }
 
       // Lighting: Jumpflood
       const int max_dim = glm::max(light_w, light_h);
@@ -990,39 +1067,44 @@ RenderThread()
         jumpflood_ubo.data[1] = light_w;
         jumpflood_ubo.data[2] = light_h;
         jumpflood_ubo.data[3] = 0.0f;
-        render_to_texture(
-          //
-          cmd_buf,
-          jumpflood_pipeline,
-          quad_data_buffer,
-          texture_to_render_to,
-          renderer_info.samplers[0],
-          vp_matrix_nopos,
-          { 0.0f, 0.0f, 0.0f, 1.0f },
-          { texture_to_sample_from },
-          1,
-          &jumpflood_ubo);
+
+        const RenderToTextureInput jumpflood_input{
+          .cmd_buf = cmd_buf,
+          .pipeline = jumpflood_pipeline,
+          .data_buffer = quad_data_buffer,
+          .texture = texture_to_render_to,
+          .vp_matrix = vp_matrix_nopos,
+          .clear_col = { 0.0f, 0.0f, 0.0f, 0.0f },
+          .sampler = renderer_info.samplers[0],
+          .sampled_textures = { texture_to_sample_from },
+          .SPRITE_COUNT = 1,
+          .ubo = &jumpflood_ubo,
+        };
+        render_to_texture(jumpflood_input);
 
         final_lighting_texture = texture_to_render_to;
       }
 
       // Lighting: Voronoi Distance
-
       UniformBlock voronoi_distance_ubo;
       voronoi_distance_ubo.data[0] = render_w;
       voronoi_distance_ubo.data[1] = render_h;
       voronoi_distance_ubo.data[2] = 0.0f;
       voronoi_distance_ubo.data[3] = 0.0f;
-      render_to_texture(cmd_buf,
-                        voronoi_distance_pipeline,
-                        quad_data_buffer,
-                        gpu_texture_lighting_voronoi_distance,
-                        renderer_info.samplers[0],
-                        vp_matrix_nopos,
-                        { 0.0f, 0.0f, 0.0f, 1.0f },
-                        { final_lighting_texture, gpu_texture_lighting_emitters_and_occluders },
-                        1,
-                        &voronoi_distance_ubo);
+
+      const RenderToTextureInput voronoi_distance_input{
+        .cmd_buf = cmd_buf,
+        .pipeline = voronoi_distance_pipeline,
+        .data_buffer = quad_data_buffer,
+        .texture = gpu_texture_lighting_voronoi_distance,
+        .vp_matrix = vp_matrix_nopos,
+        .clear_col = { 0.0f, 0.0f, 0.0f, 0.0f },
+        .sampler = renderer_info.samplers[0],
+        .sampled_textures = { final_lighting_texture, gpu_texture_lighting_emitters_and_occluders },
+        .SPRITE_COUNT = 1,
+        .ubo = &voronoi_distance_ubo,
+      };
+      render_to_texture(voronoi_distance_input);
 
       // Output
       UniformBlock ubo_final;
@@ -1072,7 +1154,7 @@ RenderThread()
   if (custom_texture_out.texture != nullptr)
     SDL_ReleaseGPUTexture(device, custom_texture_out.texture);
   SDL_ReleaseGPUTexture(device, gpu_texture_a);
-  for (int i = 0; i < SDL_arraysize(renderer_info.samplers); i++) {
+  for (int i = 0; i < renderer_info.samplers.size(); i++) {
     if (renderer_info.samplers[i] != nullptr)
       SDL_ReleaseGPUSampler(device, renderer_info.samplers[i]);
   }
@@ -1103,7 +1185,7 @@ main(int argc, char* argv[])
 {
   // setvbuf(stdout, nullptr, _IONBF, 0); // dont buffer
 
-  if (!SDL_SetAppMetadata("SomeCoolGame", "1.0", "com.blueberrygames.game"))
+  if (!SDL_SetAppMetadata("SomeCoolGame", "0.1", "com.blueberrygames.game"))
     throw SDLException("Couldn't SDL_SetAppMetadata()");
   if (!SDL_Init(SDL_INIT_VIDEO))
     throw SDLException("Failed to SDL_Init(SDL_INIT_VIDEO)");
@@ -1123,6 +1205,7 @@ main(int argc, char* argv[])
   if (!device_driver)
     throw SDLException("Couldn't get GPU device driver");
   SDL_Log("Using GPU device driver: %s", device_driver);
+  game_data.device = device;
 
   ImGuiSetup im_setup;
   im_setup.game_ui_data = &game_ui_data;

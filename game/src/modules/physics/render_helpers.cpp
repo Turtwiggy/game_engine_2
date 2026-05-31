@@ -22,13 +22,18 @@ update_transforms_from_physics(entt::registry& r)
     for (int i = 1; i < shape_ids.size(); i++)
       aabb = b2AABB_Union(aabb, b2Shape_GetAABB(shape_ids[i]));
 
-    const float w = aabb.upperBound.x - aabb.lowerBound.x;
-    const float h = aabb.upperBound.y - aabb.lowerBound.y;
+    // size from physics
+    // const float w = aabb.upperBound.x - aabb.lowerBound.x;
+    // const float h = aabb.upperBound.y - aabb.lowerBound.y;
+    // const vec2 size_in_pixels = meters_to_pixels({ w, h });
+
+    // size from transform
+    const vec2 size_in_pixels = t_c.size.xy();
+
     const vec2 pos_in_pixels = meters_to_pixels(b2_pos);
-    const vec2 size_in_pixels = meters_to_pixels({ w, h });
     const vec2 pos_tl = pos_in_pixels - (0.5f * size_in_pixels);
     t_c.pos = vec3{ pos_tl.x, pos_tl.y, 0.0f };
-    t_c.size = vec3{ size_in_pixels.x, size_in_pixels.y, 0.0f };
+    // t_c.size = vec3{ size_in_pixels.x, size_in_pixels.y, 0.0f };
     t_c.rotation_radians = b2Rot_GetAngle(b2Body_GetRotation(id));
   }
 }

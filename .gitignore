@@ -8,6 +8,7 @@ build/
 .DS_Store
 !thirdparty/sdk/*.dll
 game/assets/shaders/compiled/*
+game/assets/packs/*
 
 # Configs
 imgui.ini

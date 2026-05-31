@@ -5,19 +5,19 @@
 namespace game2d {
 
 void
-render_to_texture(
-  //
-  SDL_GPUCommandBuffer* cmd_buf,
-  SDL_GPUGraphicsPipeline* pipeline,
-  SDL_GPUBuffer* sprite_data_buffer,
-  SDL_GPUTexture* texture,
-  SDL_GPUSampler* sampler,
-  const glm::mat4 vp_matrix,
-  const glm::vec4 clear_col,
-  std::vector<SDL_GPUTexture*> sampled_textures,
-  const uint32_t SPRITE_COUNT,
-  UniformBlock* uniform)
+render_to_texture(const RenderToTextureInput& input)
 {
+  auto* cmd_buf = input.cmd_buf;
+  auto* pipeline = input.pipeline;
+  auto* sprite_data_buffer = input.data_buffer;
+  auto* texture = input.texture;
+  auto& vp_matrix = input.vp_matrix;
+  auto& clear_col = input.clear_col;
+  auto* shared_sampler = input.sampler;
+  auto& sampled_textures = input.sampled_textures;
+  auto SPRITE_COUNT = input.SPRITE_COUNT;
+  auto* uniform = input.ubo;
+
   const SDL_GPUColorTargetInfo col_info_a = {
     .texture = texture,
     .mip_level = 0,
@@ -40,9 +40,14 @@ render_to_texture(
     }
 
     std::vector<SDL_GPUTextureSamplerBinding> bindings;
-    for (const auto& sampled_texture : sampled_textures)
-      bindings.push_back({ .texture = sampled_texture, .sampler = sampler });
-    if (bindings.size() > 0)
+    for (int i = 0; i < sampled_textures.size(); i++) {
+      auto sampled_texture = sampled_textures[i];
+      bindings.push_back({
+        .texture = sampled_texture,
+        .sampler = shared_sampler,
+      });
+    }
+    if (!bindings.empty())
       SDL_BindGPUFragmentSamplers(render_pass, 0, bindings.data(), (uint32_t)bindings.size());
 
     SDL_DrawGPUPrimitives(render_pass, SPRITE_COUNT * 6, 1, 0, 0);
@@ -92,11 +97,11 @@ render_to_swapchain(SDL_GPUCommandBuffer* cmd_buf,
         SDL_BindGPUFragmentStorageBuffers(render_pass, 0, &lights_buffer, 1);
 
         if (textures.size() > 0) {
-          std::vector<SDL_GPUTextureSamplerBinding> samplers;
+          std::vector<SDL_GPUTextureSamplerBinding> texs;
           std::for_each(textures.begin(), textures.end(), [&](SDL_GPUTexture* texture) {
-            samplers.push_back({ .texture = texture, .sampler = sampler });
+            texs.push_back({ .texture = texture, .sampler = sampler });
           });
-          SDL_BindGPUFragmentSamplers(render_pass, 0, samplers.data(), samplers.size());
+          SDL_BindGPUFragmentSamplers(render_pass, 0, texs.data(), texs.size());
         }
 
         SDL_PushGPUVertexUniformData(cmd_buf, 0, &vp_matrix_nopos, sizeof(glm::mat4));

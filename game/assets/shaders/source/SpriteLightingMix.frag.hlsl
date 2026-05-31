@@ -30,6 +30,7 @@ struct Input
     float4 Data1     : TEXCOORD1;
     float4 Data2     : TEXCOORD2;
     float4 Data3     : TEXCOORD3;
+    float4 Data4     : TEXCOORD4; 
 };
 
 

@@ -9,7 +9,8 @@ struct SpriteData
     float2 SpriteMax;
     float2 SpritePos;
     float2 SpriteWH;
-    float2 Padding2;
+    float SpriteSheetIdx;
+    float p4;
 };
 
 struct Output
@@ -19,6 +20,7 @@ struct Output
     float4 Data1     : TEXCOORD1;  // xy=SpritePos, zw=SpriteWH
     float4 Data2     : TEXCOORD2;  // xyzw=Colour
     float4 Data3     : TEXCOORD3;  // xy=IsEmitterAndIsOccluder, zw=unused
+    float4 Data4     : TEXCOORD4;  // spriteidx, sampleridx, padding3, padding4
 };
 
 StructuredBuffer<SpriteData> DataBuffer : register(t0, space0);
@@ -67,5 +69,6 @@ Output main(uint id : SV_VertexID)
     output.Data1.zw = sprite.SpriteWH; 
     output.Data2 = sprite.Colour;
     output.Data3.rg = sprite.IsEmitterAndIsOccluder;
+    output.Data4.r = sprite.SpriteSheetIdx;
     return output;
 }

@@ -76,8 +76,12 @@ setup_renderer(RendererInfo& ri)
 
   //  "PointClamp", "PointWrap", "LinearClamp", "LinearWrap", "AnisotropicClamp", "AnisotropicWrap",
   ri.samplers = std::vector{
-    SDL_CreateGPUSampler(device, &s0), SDL_CreateGPUSampler(device, &s1), SDL_CreateGPUSampler(device, &s2),
-    SDL_CreateGPUSampler(device, &s3), SDL_CreateGPUSampler(device, &s4), SDL_CreateGPUSampler(device, &s5),
+    SDL_CreateGPUSampler(device, &s0), //
+    SDL_CreateGPUSampler(device, &s1), //
+    SDL_CreateGPUSampler(device, &s2), //
+    SDL_CreateGPUSampler(device, &s3), //
+    SDL_CreateGPUSampler(device, &s4), //
+    SDL_CreateGPUSampler(device, &s5), //
   };
 };
 
@@ -101,8 +105,11 @@ create_texture(SDL_GPUDevice* device, const std::string path)
   int h = 0;
   int c = 0;
   unsigned char* data = stbi_load(full_path, &w, &h, &c, 0);
-  if (data == NULL)
-    throw std::runtime_error(std::format("Unable to find image: {}", full_path));
+  if (data == NULL) {
+    auto err = std::format("Unable to find image: {}", full_path);
+    SDL_Log("%s", err.c_str());
+    throw std::runtime_error(err);
+  }
 
   if (c < 4)
     throw std::runtime_error(std::format("Unsupported number of channels {}", c));
@@ -121,6 +128,8 @@ create_texture(SDL_GPUDevice* device, const std::string path)
 
   SDL_GPUTexture* texture = SDL_CreateGPUTexture(device, &texture_create_info);
   if (!texture) {
+    auto err = SDL_GetError();
+    SDL_Log("%s", err);
     throw SDLException("Failed to CreateGPUTexture()");
     exit(SDL_APP_FAILURE); // crash
   }

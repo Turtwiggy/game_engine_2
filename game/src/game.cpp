@@ -11,12 +11,16 @@
 #include "modules/physics/physics_system.hpp"
 #include "modules/physics/render_helpers.hpp"
 #include "modules/raws/raws_components.hpp"
+#include "modules/renderer/renderer_helpers.hpp"
+#include "systems/system_anims/anims_components.hpp"
 #include "systems/system_input/input_system.hpp"
 #include "systems/system_items/items_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_system.hpp"
 
 namespace game2d {
+
+using namespace std::literals;
 
 static entt::registry internal_r;
 static bool refreshed = false;
@@ -30,7 +34,7 @@ const auto move_force = 0.25f;
 // Physics
 static b2Vec2 gravity = { 0.0f, 0.0f };
 
-const auto get_system_time_for_seed = []() -> int {
+const auto get_system_time_for_seed = []() -> uint64_t {
   auto now = std::chrono::high_resolution_clock::now();
   long long seed = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
   return seed;
@@ -46,7 +50,7 @@ game_init(GameData* data)
   auto& r = internal_r;
 
   auto& camera_pos = data->camera_pos;
-  camera_pos = { -7.5, 3.2, -4.45 };
+  // camera_pos = { -7.5, 3.2, -4.45 };
 
   const auto view = r.view<const TransformComponent, const ColourComponent, const SpriteComponent>();
   SDL_Log("renderables: %zu", view.size_hint());
@@ -56,8 +60,15 @@ game_init(GameData* data)
   SINGLE_Physics::get().worldId = worldId;
   SDL_Log("Created physics world.");
 
+  // Load a texture.
+  SDL_Log("Loading texture...");
+  const auto char_tex_path = "packs/PUNY_CHARACTERS_v2_1/Pre-Made Character Spritesheets/Basic Melee/Novice.png"s;
+  const auto char_tex = create_and_upload_gpu_texture(data->device, char_tex_path);
+  data->unprocessed_textures.push_back(char_tex.texture);
+  SDL_Log("(gamethread) Loaded %zu textures.", data->unprocessed_textures.size());
+
   // rnd_x on left side of screen.
-  int seed = 0;
+  uint64_t seed = 0;
 #if defined(_DEBUG)
   seed = get_system_time_for_seed();
 #endif
@@ -67,52 +78,62 @@ game_init(GameData* data)
   for (int i = 0; i < 100; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
     const auto rnd_y = random(rnd, 0.0f, 720.0f);
-
-    const auto consumer_e = spawn(r, { .pos = { rnd_x, rnd_y }, .size = { stuff_size, stuff_size }, .is_occluder = true });
+    const auto consumer_e = spawn(r,
+                                  {
+                                    .pos = { rnd_x, rnd_y },
+                                    .render_size = { stuff_size, stuff_size },
+                                    .coll_size = { stuff_size, stuff_size },
+                                    .is_occluder = true,
+                                  });
     r.emplace<ContainerReceiverComponent>(consumer_e);
     r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
   }
 
-  const auto provider_e = spawn(r,
-                                {
-                                  .pos = { rnd_0_x, 300 },
-                                  .size = { stuff_size, stuff_size },
-                                  .colour = { 1.0f, 0.0f, 0.0f },
-                                  .is_emitter = true,
-                                });
-  r.emplace<ContainerProviderComponent>(provider_e);
-  r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
+  // const auto provider_e = spawn(r,
+  //                               {
+  //                                 .pos = { rnd_0_x, 300 },
+  //                                 .size = { stuff_size, stuff_size },
+  //                                 .colour = { 1.0f, 0.0f, 0.0f },
+  //                                 .is_emitter = true,
+  //                               });
+  // r.emplace<ContainerProviderComponent>(provider_e);
+  // r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
   const auto player_e = spawn(r,
-                              {
-                                .pos = { 500.0f, 450.0f },
-                                .size = { stuff_size, stuff_size },
-                                .colour = { 0.0f, 1.0f, 1.0f },
-                                .is_emitter = true,
-                              });
+                              SpawnConfig{ .pos = { 500.0f, 450.0f },
+                                           .render_size = { 64.0f, 64.0f },
+                                           .coll_size = { 32.0f, 32.0f },
+                                           .colour = { 1.0f, 1.0f, 1.0f },
+                                           .sprite = default_character_spritesheet(),
+                                           .is_emitter = true });
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
 
   for (int i = 0; i < 6; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
     const auto rnd_y = random(rnd, 0.0f, 720.0f);
-
     const auto light_e = spawn(r,
                                { .pos = { rnd_x, rnd_y },
-                                 .size = { stuff_size, stuff_size },
+                                 .render_size = { stuff_size, stuff_size },
+                                 .coll_size = { stuff_size, stuff_size },
                                  .colour = { 1.0f, 0.0f, 0.0f, 1.0f },
+                                 .sprite = default_spritesheet(),
                                  .is_emitter = true });
   }
 
-  spawn(r,
-        { .pos = { 0.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
-  spawn(r,
-        { .pos = { 0.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
-  spawn(
-    r, { .pos = { 1280.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
-  spawn(
-    r,
-    { .pos = { 1280.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true });
+  // spawn(r,
+  //       { .pos = { 0.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
+  //       });
+  // spawn(r,
+  //       { .pos = { 0.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
+  //       });
+  // spawn(
+  //   r, { .pos = { 1280.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
+  //   });
+  // spawn(
+  //   r,
+  //   { .pos = { 1280.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
+  //   });
 
   SDL_Log("game_init() - done");
 };

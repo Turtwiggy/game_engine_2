@@ -10,24 +10,22 @@
 namespace game2d {
 
 SpriteComponent
-default_sprite()
+default_spritesheet()
 {
   const SpriteComponent s{
-    .sprite_max_x = 32.0f,
-    .sprite_max_y = 32.0f,
-    .sprite_pos_x = 0.0f,
-    .sprite_pos_y = 0.0f,
-    .sprite_wh_x = 1.0f,
-    .sprite_wh_y = 1.0f,
+    .sprite_max_x = 512 / 16,
+    .sprite_max_y = 512 / 16,
+    .spritesheet_idx = base_spritesheet_idx,
   };
   return s;
-}
+};
 
 entt::entity
 spawn(entt::registry& r, const SpawnConfig& data)
 {
   const vec2 pos = data.pos;
-  const vec2 size = data.size;
+  const vec2 render_size = data.render_size;
+  const vec2 coll_size = data.coll_size;
   const ColourComponent colour = data.colour;
   const bool is_static = data.is_static;
   const bool is_sensor = data.is_sensor;
@@ -37,7 +35,7 @@ spawn(entt::registry& r, const SpawnConfig& data)
   const auto world_id = SINGLE_Physics::get().worldId;
   // SDL_Log("Spawning thing at: %0.2f %0.2f", pos.x, pos.y);
 
-  b2Vec2 size_meters = pixels_to_meters(size);
+  b2Vec2 size_meters = pixels_to_meters(coll_size);
   b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
 
   b2BodyDef bodyDef = b2DefaultBodyDef();
@@ -56,14 +54,14 @@ spawn(entt::registry& r, const SpawnConfig& data)
 
   TransformComponent t_c;
   auto pos_2d = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
-  auto size_2d = meters_to_pixels(size_meters);
+  // auto size_2d = meters_to_pixels(size_meters);
   t_c.pos = vec3{ pos_2d.x, pos_2d.y, 0.0f };
-  t_c.size = vec3{ size_2d.x, size_2d.y, 0.0f };
+  t_c.size = vec3{ render_size.x, render_size.y, 0.0f };
 
   entt::entity e = r.create();
   r.emplace<TransformComponent>(e, t_c);
   r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
-  r.emplace<SpriteComponent>(e, default_sprite());
+  r.emplace<SpriteComponent>(e, data.sprite);
   r.emplace<LightComponent>(e, LightComponent{ .is_emitter = (float)is_emitter, .is_occluder = (float)is_occluder });
   r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ .id = body_id, .shape_ids = { shape_id } });
   set_entity_from_body_id(body_id, e);

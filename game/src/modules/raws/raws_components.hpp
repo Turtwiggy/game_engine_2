@@ -20,15 +20,19 @@ namespace game2d {
 //           const glm::vec2& pos,
 //           const glm::vec2& size = { default_map_unit_tilesize, default_map_unit_tilesize });
 
+const int base_spritesheet_idx = 0;
+const int char_spritesheet_idx = 1;
+
 SpriteComponent
-default_sprite();
+default_spritesheet();
 
 struct SpawnConfig
 {
   const vec2 pos;
-  const vec2 size;
+  const vec2 render_size;
+  const vec2 coll_size;
   const ColourComponent colour = { 1.0f, 1.0f, 1.0f, 1.0f };
-  const SpriteComponent sprite = default_sprite();
+  const SpriteComponent sprite = default_spritesheet();
   const bool is_static = false;
   const bool is_sensor = false;
   const bool is_emitter = false;
