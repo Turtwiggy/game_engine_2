@@ -12,7 +12,7 @@ namespace game2d {
 
 enum class SpriteDir
 {
-  S,
+  S = 0,
   SE,
   E,
   NE,
@@ -33,8 +33,7 @@ struct SpriteData
 struct SpriteAnim
 {
   std::string name;
-  uint32_t start_frame = 0;
-  uint32_t end_frame = 0;
+  std::vector<std::pair<int, int>> anim; // frame idx of anim
 };
 
 // data
@@ -53,19 +52,37 @@ const std::vector<SpriteData> dirinfo = {
 };
 
 const std::vector<SpriteAnim> anims{
-  SpriteAnim{ .name = "idle", .start_frame = 0, .end_frame = 1 },
-  SpriteAnim{ .name = "walk", .start_frame = 2, .end_frame = 4 },
-  SpriteAnim{ .name = "carry", .start_frame = 25, .end_frame = 26 },
-  SpriteAnim{ .name = "jump", .start_frame = 27, .end_frame = 28 },
-  SpriteAnim{ .name = "sword", .start_frame = 5, .end_frame = 8 },
-  SpriteAnim{ .name = "bow", .start_frame = 9, .end_frame = 12 },
-  SpriteAnim{ .name = "stave", .start_frame = 13, .end_frame = 15 },
-  SpriteAnim{ .name = "throw", .start_frame = 16, .end_frame = 18 },
-  SpriteAnim{ .name = "hurt", .start_frame = 19, .end_frame = 21 },
-  SpriteAnim{ .name = "death", .start_frame = 22, .end_frame = 24 },
+  // if row is -1 -- means replace it with the direction row
+  SpriteAnim{ .name = "idle", .anim = { { 0, -1 }, { 1, -1 } } }, //
+  SpriteAnim{ .name = "walk", .anim = { { 2, -1 }, { 3, -1 }, { 4, -1 }, { 3, -1 } } },
+  SpriteAnim{ .name = "sword", .anim = { { 5, -1 }, { 6, -1 }, { 7, -1 }, { 8, -1 } } },
+  SpriteAnim{ .name = "bow", .anim = { { 9, -1 }, { 10, -1 }, { 11, -1 }, { 12, -1 } } },
+  SpriteAnim{ .name = "stave", .anim = { { 13, -1 }, { 14, -1 }, { 15, -1 }, { 15, -1 } } },
+  SpriteAnim{ .name = "throw", .anim = { { 16, -1 }, { 17, -1 }, { 18, -1 } } },
+  SpriteAnim{ .name = "hurt", .anim = { { 19, -1 }, { 20, -1 }, { 21, -1 } } },
+  SpriteAnim{ .name = "death", .anim = { { 22, -1 }, { 23, -1 }, { 24, -1 }, { 23, -1 } } },
+  SpriteAnim{ .name = "carry", .anim = { { 26, -1 }, { 25, -1 }, { 27, -1 }, { 25, -1 } } },
+  SpriteAnim{ .name = "jump", .anim = { { 0, -1 }, { 28, -1 } } },
+  SpriteAnim{ .name = "spin", .anim = { { 0, 0 }, { 0, 1 }, { 0, 2 }, { 0, 3 }, { 0, 4 }, { 0, 5 }, { 0, 6 } } }
 };
 
 SpriteComponent
 default_character_spritesheet();
+
+struct SpriteAnimationState
+{
+  std::string playing_animation_name;
+
+  float timer = 0.0f;
+  float duration = 0.5f; // seconds
+  bool playing = true;
+  bool looping = true;
+};
+
+struct SpriteDirComponent
+{
+  SpriteDir dir = SpriteDir::S;
+  vec2 vel;
+};
 
 } // namespace game2d

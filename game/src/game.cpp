@@ -5,6 +5,7 @@
 #include "game_and_engine_interop.hpp"
 #include "modules/actors/actor_player/actor_player_components.hpp"
 #include "modules/box2d/box2d_components.hpp"
+#include "modules/entt/entt_helpers.hpp"
 #include "modules/input/input_helpers.hpp"
 #include "modules/physics/box2d_parallel.hpp"
 #include "modules/physics/physics_components.hpp"
@@ -13,6 +14,8 @@
 #include "modules/raws/raws_components.hpp"
 #include "modules/renderer/renderer_helpers.hpp"
 #include "systems/system_anims/anims_components.hpp"
+#include "systems/system_anims/anims_helpers.hpp"
+#include "systems/system_anims/anims_system.hpp"
 #include "systems/system_input/input_system.hpp"
 #include "systems/system_items/items_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_components.hpp"
@@ -29,7 +32,8 @@ static float camera_speed = 500.0f;
 static float mouse_sens = 0.01f;
 static float stuff_size = 32.0f;
 const auto jump_force = b2Vec2{ 0.0f, -5.0f };
-const auto move_force = 0.25f;
+const auto move_force = 0.15f;
+const auto move_damping = 10.0f;
 
 // Physics
 static b2Vec2 gravity = { 0.0f, 0.0f };
@@ -62,7 +66,8 @@ game_init(GameData* data)
 
   // Load a texture.
   SDL_Log("Loading texture...");
-  const auto char_tex_path = "packs/PUNY_CHARACTERS_v2_1/Pre-Made Character Spritesheets/Basic Melee/Novice.png"s;
+  // const auto char_tex_path = "packs/PUNY_CHARACTERS_v2_1/Pre-Made Character Spritesheets/Basic Melee/Novice.png"s;
+  const auto char_tex_path = "packs/PUNY_CHARACTERS_v2_1/premade.png"s;
   const auto char_tex = create_and_upload_gpu_texture(data->device, char_tex_path);
   data->unprocessed_textures.push_back(char_tex.texture);
   SDL_Log("(gamethread) Loaded %zu textures.", data->unprocessed_textures.size());
@@ -99,15 +104,21 @@ game_init(GameData* data)
   // r.emplace<ContainerProviderComponent>(provider_e);
   // r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
 
+  const auto player_body_def = PhysicsBodyDef{
+    .linear_damping = move_damping,
+  };
   const auto player_e = spawn(r,
                               SpawnConfig{ .pos = { 500.0f, 450.0f },
                                            .render_size = { 64.0f, 64.0f },
                                            .coll_size = { 32.0f, 32.0f },
+                                           .body_def = player_body_def,
                                            .colour = { 1.0f, 1.0f, 1.0f },
                                            .sprite = default_character_spritesheet(),
                                            .is_emitter = true });
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
+  r.emplace<SpriteAnimationState>(player_e);
+  r.emplace<SpriteDirComponent>(player_e);
 
   for (int i = 0; i < 6; i++) {
     const auto rnd_x = random(rnd, 550.0f, 900.0f);
@@ -214,6 +225,23 @@ game_update(GameData* data)
   ui_data.keyboard_r = frame_inputs_c.keyboard_r;
   ui_data.controller_l = frame_inputs_c.controller_l;
   ui_data.controller_r = frame_inputs_c.controller_r;
+
+  // convert input <=> sprite
+  const auto player_e = get_first<PlayerComponent>(r);
+  if (player_e != entt::null) {
+    auto& player_sprite_c = r.get<SpriteDirComponent>(player_e);
+
+    auto dir = vec_to_dir(ui_data.keyboard_l.x, ui_data.keyboard_l.y, player_sprite_c.dir);
+    player_sprite_c.dir = dir;
+
+    // vel can impact animations
+    auto body_id = r.get<PhysicsBodyComponent>(player_e).id;
+    auto body_vel = b2Body_GetLinearVelocity(body_id);
+    player_sprite_c.vel = { body_vel.x, body_vel.y };
+  }
+
+  // systems.
+  update_animator_system(r, dt);
 
   // process ui data.
   const auto view = r.view<const Request_GameOver>();

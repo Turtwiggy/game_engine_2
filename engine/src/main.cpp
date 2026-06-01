@@ -669,11 +669,11 @@ RenderThread()
       };
       draw_tex("GpuTextureA", gpu_texture_a);
 
-      // auto& r_tex = game_ui_data.renderthread_owned_textures;
-      // for (int i = 0; i < r_tex.size(); i++) {
-      //   auto& tex = r_tex[i];
-      //   draw_tex(std::format("GameTex {}", i).c_str(), tex);
-      // }
+      auto& r_tex = game_ui_data.renderthread_owned_textures;
+      for (int i = 0; i < r_tex.size(); i++) {
+        auto& tex = r_tex[i];
+        draw_tex(std::format("GameTex {}", i).c_str(), tex);
+      }
 
       // draw_tex("Occluders", gpu_texture_lighting_emitters_and_occluders);
       // draw_tex("Seed", gpu_texture_lighting_voronoi_seed);

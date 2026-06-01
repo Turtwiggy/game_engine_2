@@ -18,7 +18,7 @@
 
 	"c++ new header file": {
 		"body": [
-			"#pragma once",
+			"#pragma once // IWYU pragma: keep",
 			"",
 			"#include <entt/fwd.hpp>",
 			"",

@@ -26,15 +26,23 @@ const int char_spritesheet_idx = 1;
 SpriteComponent
 default_spritesheet();
 
+struct PhysicsBodyDef
+{
+  bool is_bullet = false;
+  bool is_sensor = false;
+  bool is_static = false;
+  float linear_damping = 0.0f;
+  float angular_damping = 0.0f;
+};
+
 struct SpawnConfig
 {
   const vec2 pos;
   const vec2 render_size;
   const vec2 coll_size;
+  const PhysicsBodyDef body_def;
   const ColourComponent colour = { 1.0f, 1.0f, 1.0f, 1.0f };
   const SpriteComponent sprite = default_spritesheet();
-  const bool is_static = false;
-  const bool is_sensor = false;
   const bool is_emitter = false;
   const bool is_occluder = false;
 };

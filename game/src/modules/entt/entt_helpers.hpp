@@ -31,4 +31,11 @@ create_empty(entt::registry& r, const std::optional<T>& val = std::nullopt)
   return e;
 }
 
+template<class T, typename... Other>
+[[nodiscard]] entt::entity
+get_first(entt::registry& r)
+{
+  return r.view<const T, const Other...>().front();
+};
+
 } // namespace game2d
