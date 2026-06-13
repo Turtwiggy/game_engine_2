@@ -28,8 +28,8 @@ update_physics_system(GameData* data, entt::registry& r, const float dt)
       const auto shape_eid_a = (entt::entity)(reinterpret_cast<uintptr_t>(b2Shape_GetUserData(a)));
       const auto shape_eid_b = (entt::entity)(reinterpret_cast<uintptr_t>(b2Shape_GetUserData(b)));
 
-      assert(shape_eid_a != entt::null);
-      assert(shape_eid_a != entt::null);
+      assert(shape_eid_a != entt::null && r.valid(shape_eid_a));
+      assert(shape_eid_b != entt::null && r.valid(shape_eid_b));
       callback(shape_eid_a, shape_eid_b);
     };
 

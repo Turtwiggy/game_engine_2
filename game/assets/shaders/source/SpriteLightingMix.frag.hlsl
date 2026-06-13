@@ -147,7 +147,8 @@ float4 main(Input input) : SV_Target0
     // float4 hmm = float4(dist, dist, dist, 1.0);
     // return hmm;
 
-    float4 col = float4(0.0, 0.0, 0.0, 1.0);
+    // float4 col = float4(0.0, 0.0, 0.0, 1.0);
+    float4 col = float4(0.3, 0.3, 0.3, 1.0);
     
     // ambient occlusion
     // col = float4(0.3, 0.3, 0.3, 1.0);
@@ -166,8 +167,9 @@ float4 main(Input input) : SV_Target0
         float2 lightPos = l.position.xy;
         float4 lightCol = float4(1.0, 1.0, 1.0, 1.0);
         setLuminance(lightCol, 1.25);
+        // setLuminance(lightCol, 0.8);
 
-        col += drawLight(p, lightPos, lightCol, dist, 250.0, 1.0 );
+        // col += drawLight(p, lightPos, lightCol, dist, 250.0, 1.0 );
 
         // Light l0;
         // l0.position = center;
@@ -185,7 +187,8 @@ float4 main(Input input) : SV_Target0
 
     float4 lighting_col = col;
 
-    float4 final_col = scene_col * lighting_col;
+    // float4 final_col = scene_col * lighting_col;
+    float4 final_col = scene_col;
     return final_col;
 
     // float3 normal_tex = Screen_NormalTexture.Sample(NormalSampler, v_uv).xyz;

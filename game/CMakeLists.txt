@@ -84,6 +84,15 @@ elseif(${CMAKE_SYSTEM_NAME} MATCHES Linux)
   set(VCPKG_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/thirdparty/vcpkg/installed/x64-linux/include)
 endif()
 
+message("Rebuilding game...")
+
+if(${CMAKE_SYSTEM_NAME} MATCHES Windows)
+  message("copying game.dll to engine/")
+  set(BUILT_DLL "${CMAKE_SOURCE_DIR}/build/game/GameDLL.dll")
+  copy_file_next_to_exe(GameDLL "${BUILT_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/../engine/GameDLL.dll")
+  copy_file_next_to_exe(GameDLL "${BUILT_DLL}" "${CMAKE_CURRENT_BINARY_DIR}/../engine/GameDLL-hot-unlocked.dll")
+endif()
+
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_DESCRIPTION "Super cool things")

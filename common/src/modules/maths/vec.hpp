@@ -44,6 +44,18 @@ struct vec3
   float z = 0.0f;
 
   vec2 xy() const { return { x, y }; }
+
+  vec3& operator+=(const vec3& other);
+  vec3& operator-=(const vec3& other);
 };
+
+vec3
+operator*(const float other, const vec3& v);
+
+vec3
+operator+(const vec3& a, const vec3& b);
+
+vec3
+operator-(const vec3& a, const vec3& b);
 
 } // namespace game2d

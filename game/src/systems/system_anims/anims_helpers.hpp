@@ -1,4 +1,4 @@
-#pragma once // IWYU pragma: keep
+#pragma once
 
 #include "anims_components.hpp"
 

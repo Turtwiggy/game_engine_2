@@ -67,7 +67,7 @@ GameData game_data;
 static std::mutex game_ui_mtx;
 static GameUIData game_ui_data;
 static sdl_game_code game_code;
-uint32_t n_sprite_pipeline_textures = 0;
+// uint32_t n_sprite_pipeline_textures = 0;
 
 static EventQueue<SDL_Event> game_event_queue;
 static EventQueue<SDL_Event> rend_event_queue;
@@ -526,7 +526,8 @@ RenderThread()
     return gpu_texture;
   };
 
-  auto* sprite_pipeline = CreateSpritePipeline(0);
+  const auto n_max_sprite_textures = 12;
+  auto* sprite_pipeline = CreateSpritePipeline(n_max_sprite_textures);
   auto* emitter_and_occluder_pipeline = CreateEmitterAndOccluderPipeline();
   auto* seed_pipeline = CreateLightingSeedPipeline();
   auto* jumpflood_pipeline = CreateJumpfloodPipeline();
@@ -602,7 +603,7 @@ RenderThread()
       wants_to_rebuild_shaders |= rebuild_shaders;
       if (wants_to_rebuild_shaders) {
         rebuild_shaders = false;
-        n_sprite_pipeline_textures = 0; // reset it
+        // n_sprite_pipeline_textures = 0; // reset it
 
         // releasing and recreate the fill pipeline (which uses the updated shaders)
         SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
@@ -619,7 +620,7 @@ RenderThread()
           jumpflood_pipeline = CreateErrorPipeline();
           mix_pipeline = CreateErrorPipeline();
         } else if (result == 0) {
-          sprite_pipeline = CreateSpritePipeline(0);
+          sprite_pipeline = CreateSpritePipeline(n_max_sprite_textures);
           emitter_and_occluder_pipeline = CreateEmitterAndOccluderPipeline();
           seed_pipeline = CreateLightingSeedPipeline();
           jumpflood_pipeline = CreateJumpfloodPipeline();
@@ -715,19 +716,25 @@ RenderThread()
       const auto vp_matrix_light = proj_ortho_light * view_matrix;
 
       auto sampler = renderer_info.samplers[0]; // nearest
+
+      // make sure textures go up to 0.
       auto textures = std::vector<SDL_GPUTexture*>{ custom_texture_out.texture };
 
       // add any texture the game has added (but now owned by renderthread)
       const auto& tex = game_ui_data.renderthread_owned_textures;
       textures.insert(textures.end(), tex.begin(), tex.end());
+      for (auto i = textures.size(); i < n_max_sprite_textures; i++)
+        textures.push_back(custom_texture_out.texture);
+      if (textures.size() > n_max_sprite_textures)
+        throw std::runtime_error(std::format("Warning; shader set to {} textures.", n_max_sprite_textures));
 
       // need to recreate sprite pipeline.
-      if (n_sprite_pipeline_textures != textures.size()) {
-        SDL_Log("Recreating sprite pipeline with textures: %zu", textures.size());
-        SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
-        sprite_pipeline = CreateSpritePipeline((uint32_t)textures.size());
-        n_sprite_pipeline_textures = (uint32_t)textures.size();
-      }
+      // if (n_sprite_pipeline_textures != textures.size()) {
+      // SDL_Log("Recreating sprite pipeline with textures: %zu", textures.size());
+      // SDL_ReleaseGPUGraphicsPipeline(device, sprite_pipeline);
+      // sprite_pipeline = CreateSpritePipeline((uint32_t)textures.size());
+      // n_sprite_pipeline_textures = (uint32_t)textures.size();
+      // }
 
       // "One can encode multiple render passes
       // (or alternate between render and compute passes) in a single command buffer.

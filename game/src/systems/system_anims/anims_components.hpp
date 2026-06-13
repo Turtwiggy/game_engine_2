@@ -74,15 +74,21 @@ struct SpriteAnimationState
   std::string playing_animation_name;
 
   float timer = 0.0f;
-  float duration = 0.5f; // seconds
+  float duration = 1.0f; // seconds
   bool playing = true;
   bool looping = true;
+
+  int anim_idx = 0;
 };
 
 struct SpriteDirComponent
 {
   SpriteDir dir = SpriteDir::S;
-  vec2 vel;
+};
+
+struct SpriteFollowParentComponent
+{
+  entt::entity parent_e;
 };
 
 } // namespace game2d

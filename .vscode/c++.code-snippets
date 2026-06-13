@@ -18,7 +18,7 @@
 
 	"c++ new header file": {
 		"body": [
-			"#pragma once // IWYU pragma: keep",
+			"#pragma once",
 			"",
 			"#include <entt/fwd.hpp>",
 			"",
@@ -32,7 +32,7 @@
 	},
 	"c++ new body file": {
 		"body": [
-			"#include \"pch.hpp\"",
+			"#include \"pch.hpp\" // IWYU pragma: keep",
 			"",
 			"#include \"${1:system}.hpp\"",
 			"",

@@ -4,6 +4,7 @@
 
 #include "anims_components.hpp"
 #include "game_and_engine_interop.hpp"
+#include "systems/system_input/input_components.hpp"
 
 namespace game2d {
 
@@ -24,33 +25,48 @@ update_animator_system(entt::registry& r, const float dt)
   // ZoneScoped;
 #endif
 
-  const auto& view = r.view<SpriteComponent, SpriteAnimationState, SpriteDirComponent>();
-  for (const auto& [e, sprite_c, animation, sprite_dir_c] : view.each()) {
-
+  const auto update_anims = [](const InputComponent& input_c,
+                               SpriteComponent& sprite_c,
+                               SpriteDirComponent& sprite_dir_c,
+                               SpriteAnimationState& animation,
+                               float dt) {
+    //
     // hack: choose anim by idx
-    int idle_anim_idx = 0;
-    int walk_anim_idx = 1;
-    int anim_idx = idle_anim_idx;
-    auto length = glm::length2(glm::vec2{ sprite_dir_c.vel.x, sprite_dir_c.vel.y });
-    if (length > 1.0f)
-      anim_idx = walk_anim_idx;
+    // int idle_anim_idx = 0;
+    // int walk_anim_idx = 1;
+    // int anim_idx = idle_anim_idx;
+    // auto length = glm::length2(glm::vec2{ sprite_dir_c.vel.x, sprite_dir_c.vel.y });
+    // if (length > 1.0f)
+    //   anim_idx = walk_anim_idx;
 
-    auto anim = anims[anim_idx];
+    // hack: loop through the anims.
+    int anim_idx = animation.anim_idx;
+    // int max_anims = anims.size();
+
+    const auto anim = anims[anim_idx];
 
     animation.timer += dt;
 
     const int n_frames = anim.anim.size();
 
+    // hack: x ms per frame
+    animation.duration = (float)n_frames * 0.1f;
+
     if (animation.timer >= animation.duration && !animation.looping) {
-      const int i0 = (int)(n_frames - 1);
+      // const int i0 = (int)(n_frames - 1);
       // const SpritePosition& frame = anim.animation_frames[i0];
       // sprite_c.tex_pos = frame;
-      continue;
+      return;
     }
 
     // loop the timer
-    if (animation.timer >= animation.duration)
+    if (animation.timer >= animation.duration) {
       animation.timer -= animation.duration * glm::floor(animation.timer / animation.duration);
+
+      // hack: loop through anims
+      // animation.anim_idx += 1;
+      // animation.anim_idx %= anims.size();
+    }
 
     // get the index of the frame to play
     const int i0 = get_index(animation.timer, animation.duration, n_frames);
@@ -61,7 +77,34 @@ update_animator_system(entt::registry& r, const float dt)
 
     sprite_c.sprite_pos_x = anim_info.first;
     sprite_c.sprite_pos_y = anim_info.second == -1 ? dir : anim_info.second;
+  };
+
+  const auto view0 = r.view<SpriteComponent, SpriteDirComponent, SpriteAnimationState, const InputComponent>();
+  for (const auto& [e, sprite_c, sprite_dir_c, animation, input_c] : view0.each()) {
+    update_anims(input_c, sprite_c, sprite_dir_c, animation, dt);
   }
+
+  std::unordered_set<entt::entity> processed_parent_e;
+
+  const auto view1 = r.view<SpriteComponent, SpriteFollowParentComponent>();
+  for (const auto& [e, sprite_c, parent_c] : view1.each()) {
+
+    auto parent_e = parent_c.parent_e;
+
+    // only process once per sprite parent
+    if (processed_parent_e.contains(parent_e))
+      continue;
+
+    const auto& input_c = r.get<InputComponent>(parent_e);
+    auto& sprite_dir_c = r.get<SpriteDirComponent>(parent_e);
+    auto& animation = r.get<SpriteAnimationState>(parent_e);
+
+    update_anims(input_c, sprite_c, sprite_dir_c, animation, dt);
+
+    processed_parent_e.emplace(parent_e);
+  }
+
+  //
 }
 
 } // namespace game2d

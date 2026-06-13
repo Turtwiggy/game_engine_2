@@ -42,4 +42,40 @@ operator*(const float other, const vec2& v)
   return { other * v.x, other * v.y };
 };
 
+vec3&
+vec3::operator+=(const vec3& other)
+{
+  x += other.x;
+  y += other.y;
+  z += other.z;
+  return *this;
+};
+
+vec3&
+vec3::operator-=(const vec3& other)
+{
+  x -= other.x;
+  y -= other.y;
+  z -= other.z;
+  return *this;
+};
+
+vec3
+operator*(const float other, const vec3& v)
+{
+  return { other * v.x, other * v.y, other * v.z };
+};
+
+vec3
+operator+(const vec3& a, const vec3& b)
+{
+  return { a.x + b.x, a.y + b.y, a.z + b.z };
+};
+
+vec3
+operator-(const vec3& a, const vec3& b)
+{
+  return { a.x - b.x, a.y - b.y, a.z - b.z };
+};
+
 } // namespace game2d

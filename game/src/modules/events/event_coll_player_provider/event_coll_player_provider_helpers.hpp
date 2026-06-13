@@ -6,6 +6,11 @@
 
 namespace game2d {
 
+struct RedWizardComponent
+{
+  bool placeholder = true;
+};
+
 void
 handle_on_coll_enter__player_provider(entt::registry& r, const OnCollisionEnter& evt);
 

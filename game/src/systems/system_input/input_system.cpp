@@ -1,8 +1,10 @@
 #include "input_system.hpp"
 
-#include "modules/input/input_helpers.hpp"
+#include "input_components.hpp"
+#include "modules/actors/actor_player/actor_player_components.hpp"
 #include "modules/maths/helpers.hpp"
 #include "modules/maths/vec.hpp"
+#include "systems/system_input/input_helpers.hpp"
 
 namespace game2d {
 
@@ -28,6 +30,35 @@ sanetize(vec2 v)
   return v;
 };
 
+std::array<float, 4>
+process_joystick_analogues(SDL_Joystick* instance)
+{
+  const auto lx_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_LEFTX);
+  const auto ly_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_LEFTY);
+  const auto rx_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_RIGHTX);
+  const auto ry_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_RIGHTY);
+
+  auto lx_nrm = scale(lx_raw, -32768, 32767, -1.0f, 1.0f);
+  auto ly_nrm = scale(ly_raw, -32768, 32767, -1.0f, 1.0f);
+  auto rx_nrm = scale(rx_raw, -32768, 32767, -1.0f, 1.0f);
+  auto ry_nrm = scale(ry_raw, -32768, 32767, -1.0f, 1.0f);
+  const vec2 inp_l = vec2{ lx_nrm, ly_nrm };
+  const vec2 inp_r = vec2{ rx_nrm, ry_nrm };
+
+  const float deadzone = 0.05f;
+
+  if (abs(lx_nrm) < deadzone)
+    lx_nrm = 0.0f;
+  if (abs(ly_nrm) < deadzone)
+    ly_nrm = 0.0f;
+  if (abs(rx_nrm) < deadzone)
+    rx_nrm = 0.0f;
+  if (abs(ry_nrm) < deadzone)
+    ry_nrm = 0.0f;
+
+  return { lx_nrm, ly_nrm, rx_nrm, ry_nrm };
+}
+
 void
 update_input_system(entt::registry& r, const GameData* data)
 {
@@ -40,27 +71,54 @@ update_input_system(entt::registry& r, const GameData* data)
   generate_button_state(evts, inputs_c);
   inputs_c.mouse_dt = { 0.0f, 0.0f };
 
-  auto& inputs = SINGLE_FrameInput::get();
-  inputs.reset();
+  int n_joysticks = 0;
+  auto* joysticks = SDL_GetJoysticks(&n_joysticks);
+  inputs_c.n_joysticks = n_joysticks;
 
-  inputs.jump = get_key_down(inputs_c, SDL_SCANCODE_SPACE);
-  inputs.pickup = get_key_down(inputs_c, SDL_SCANCODE_RETURN);
-  inputs.request_gameover = get_key_down(inputs_c, SDL_SCANCODE_KP_9);
+  for (const auto& [e, player_c, input_c] : r.view<PlayerComponent, InputComponent>().each()) {
 
-  inputs.keyboard_r = { 0.0f, 0.0f };
-  inputs.keyboard_r.y += get_key_held(inputs_c, SDL_SCANCODE_UP) ? -1.0f : 0.0f;
-  inputs.keyboard_r.y += get_key_held(inputs_c, SDL_SCANCODE_DOWN) ? 1.0f : 0.0f;
-  inputs.keyboard_r.x += get_key_held(inputs_c, SDL_SCANCODE_LEFT) ? -1.0f : 0.0f;
-  inputs.keyboard_r.x += get_key_held(inputs_c, SDL_SCANCODE_RIGHT) ? 1.0f : 0.0f;
+    input_c.lx = 0.0f;
+    input_c.ly = 0.0f;
+    input_c.rx = 0.0f;
+    input_c.ry = 0.0f;
+    input_c.shoot_down = false;
 
-  inputs.keyboard_l = { 0.0f, 0.0f };
-  inputs.keyboard_l.y += get_key_held(inputs_c, SDL_SCANCODE_W) ? -1.0f : 0.0f;
-  inputs.keyboard_l.y += get_key_held(inputs_c, SDL_SCANCODE_S) ? 1.0f : 0.0f;
-  inputs.keyboard_l.x += get_key_held(inputs_c, SDL_SCANCODE_A) ? -1.0f : 0.0f;
-  inputs.keyboard_l.x += get_key_held(inputs_c, SDL_SCANCODE_D) ? 1.0f : 0.0f;
+    input_c.ry += get_key_held(inputs_c, SDL_SCANCODE_UP) ? -1.0f : 0.0f;
+    input_c.ry += get_key_held(inputs_c, SDL_SCANCODE_DOWN) ? 1.0f : 0.0f;
+    input_c.rx += get_key_held(inputs_c, SDL_SCANCODE_LEFT) ? -1.0f : 0.0f;
+    input_c.rx += get_key_held(inputs_c, SDL_SCANCODE_RIGHT) ? 1.0f : 0.0f;
 
-  inputs.keyboard_l = sanetize(inputs.keyboard_l);
-  inputs.keyboard_r = sanetize(inputs.keyboard_r);
+    input_c.ly += get_key_held(inputs_c, SDL_SCANCODE_W) ? -1.0f : 0.0f;
+    input_c.ly += get_key_held(inputs_c, SDL_SCANCODE_S) ? 1.0f : 0.0f;
+    input_c.lx += get_key_held(inputs_c, SDL_SCANCODE_D) ? 1.0f : 0.0f;
+    input_c.lx += get_key_held(inputs_c, SDL_SCANCODE_A) ? -1.0f : 0.0f;
+
+    for (const auto& evt : data->events) {
+      if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        SDL_MouseButtonEvent m_evt = evt.button;
+        input_c.shoot_down = m_evt.button == SDL_BUTTON_LEFT;
+      }
+    }
+
+    for (int i = 0; i < n_joysticks; i++) {
+      const SDL_JoystickID id = joysticks[i]; // TODO: assign joystick properly to player
+      const auto instance = SDL_GetJoystickFromID(id);
+      const auto [lx_nrm, ly_nrm, rx_nrm, ry_nrm] = process_joystick_analogues(instance);
+      input_c.lx += lx_nrm;
+      input_c.ly += ly_nrm;
+      input_c.rx += rx_nrm;
+      input_c.ry += ry_nrm;
+    }
+
+    const vec2 al = sanetize({ input_c.lx, input_c.ly });
+    const vec2 ar = sanetize({ input_c.rx, input_c.ry });
+    input_c.lx = al.x;
+    input_c.ly = al.y;
+    input_c.rx = ar.x;
+    input_c.ry = ar.y;
+
+    break; // only one for moment
+  }
 
   // data->mouse_dt = vec2{ 0.0f, 0.0f };
 
@@ -112,62 +170,6 @@ update_input_system(entt::registry& r, const GameData* data)
     if (evt.type == SDL_EVENT_JOYSTICK_BUTTON_UP) {
       SDL_Log("Joystick button up");
     }
-  }
-
-  int n_joysticks = 0;
-  auto* joysticks = SDL_GetJoysticks(&n_joysticks);
-
-  inputs_c.n_joysticks = n_joysticks;
-  inputs.controller_l = vec2{ 0.0f, 0.0f };
-  inputs.controller_r = vec2{ 0.0f, 0.0f };
-
-  for (int i = 0; i < n_joysticks; i++) {
-    const SDL_JoystickID id = joysticks[i];
-    const auto instance = SDL_GetJoystickFromID(id);
-
-    const auto lx_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_LEFTX);
-    const auto ly_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_LEFTY);
-    const auto rx_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_RIGHTX);
-    const auto ry_raw = SDL_GetJoystickAxis(instance, SDL_GAMEPAD_AXIS_RIGHTY);
-
-    const auto lx_nrm = scale(lx_raw, -32768, 32767, -1.0f, 1.0f);
-    const auto ly_nrm = scale(ly_raw, -32768, 32767, -1.0f, 1.0f);
-    const auto rx_nrm = scale(rx_raw, -32768, 32767, -1.0f, 1.0f);
-    const auto ry_nrm = scale(ry_raw, -32768, 32767, -1.0f, 1.0f);
-    const vec2 inp_l = vec2{ lx_nrm, ly_nrm };
-    const vec2 inp_r = vec2{ rx_nrm, ry_nrm };
-
-    inputs.controller_l = inp_l;
-    inputs.controller_r = inp_r;
-
-    const float deadzone = 0.05f;
-
-    if (abs(inputs.controller_l.x) < deadzone)
-      inputs.controller_l.x = 0.0f;
-    if (abs(inputs.controller_l.y) < deadzone)
-      inputs.controller_l.y = 0.0f;
-    if (abs(inputs.controller_r.x) < deadzone)
-      inputs.controller_r.x = 0.0f;
-    if (abs(inputs.controller_r.y) < deadzone)
-      inputs.controller_r.y = 0.0f;
-
-    // generate inputs for one button.
-    // static bool s_press = false;
-    // static bool s_held_last_frame = false;
-    // static bool s_held = false;
-    // static bool s_release = false;
-    // s_press = false;
-    // s_release = false;
-    // s_held = SDL_GetJoystickButton(instance, SDL_GAMEPAD_BUTTON_SOUTH);
-    // if (s_held_last_frame && !s_held)
-    //   s_release = true;
-    // if (!s_held_last_frame && s_held)
-    //   s_press = true;
-    // s_held_last_frame = s_held;
-    // if (s_press)
-    //   SDL_Log("south button pressed");
-
-    break;
   }
 
   SDL_free(joysticks);

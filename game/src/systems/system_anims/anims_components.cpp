@@ -12,7 +12,7 @@ default_character_spritesheet()
   const SpriteComponent s{
     .sprite_max_x = 928 / 32, // size of texture px / size per sprite
     .sprite_max_y = 256 / 32,
-    .spritesheet_idx = char_spritesheet_idx,
+    .spritesheet_idx = 0,
   };
   return s;
 }

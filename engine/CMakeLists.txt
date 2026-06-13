@@ -137,6 +137,8 @@ if(${CMAKE_BUILD_TYPE} MATCHES Debug)
   create_symlinks(game)
 ENDIF()
 
+message("Rebuilding engine...")
+
 # Copy dll to GameDLL-hot-unlocked.dll
 # Copy dll to GameDLL.dll
 if(${CMAKE_SYSTEM_NAME} MATCHES Windows)

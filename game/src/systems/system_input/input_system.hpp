@@ -1,6 +1,6 @@
 #pragma once
 
-#include "input_components.hpp"
+#include "game_and_engine_interop.hpp"
 
 #include <entt/fwd.hpp>
 

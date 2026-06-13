@@ -8,80 +8,137 @@
 #include "modules/box2d/box2d_components.hpp"
 #include "modules/box2d/box2d_helpers.hpp"
 #include "modules/physics/physics_components.hpp"
+#include "systems/system_shoot/shoot_components.hpp"
 
 namespace game2d {
 
 SpriteComponent
-default_spritesheet()
+default_spritesheet(int sprite_x, int sprite_y)
 {
   const SpriteComponent s{
     .sprite_max_x = 512 / 16,
     .sprite_max_y = 512 / 16,
+    .sprite_pos_x = sprite_x,
+    .sprite_pos_y = sprite_y,
     .spritesheet_idx = base_spritesheet_idx,
   };
   return s;
 };
 
 entt::entity
-spawn(entt::registry& r, const SpawnConfig& data)
+attach_body(entt::registry& r, entt::entity e, const PhysicsBodyDef& def)
 {
-  const vec2 pos = data.pos;
-  const vec2 render_size = data.render_size;
-  const vec2 coll_size = data.coll_size;
-  const ColourComponent colour = data.colour;
-
-  const auto body_def = data.body_def;
-  const bool is_static = body_def.is_static;
-  const bool is_sensor = body_def.is_sensor;
-
-  const bool is_emitter = data.is_emitter;
-  const bool is_occluder = data.is_occluder;
+  const auto pos_meters = def.pos_meters;
+  const auto size_meters = def.size_meters;
+  const auto is_bullet = def.is_bullet;
+  const auto is_static = def.is_static;
+  const auto is_sensor = def.is_sensor;
+  const auto lin_damping = def.linear_damping;
+  const auto ang_damping = def.angular_damping;
 
   const auto world_id = SINGLE_Physics::get().worldId;
 
-  entt::entity e = r.create();
-
-  // SDL_Log("Spawning thing at: %0.2f %0.2f", pos.x, pos.y);
-
-  b2Vec2 size_meters = pixels_to_meters(coll_size);
-  b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
-
   b2BodyDef bodyDef = b2DefaultBodyDef();
   bodyDef.type = is_static ? b2_staticBody : b2_dynamicBody;
-  bodyDef.position = b2Vec2{ pixels_to_meters(pos) };
+  bodyDef.position = pos_meters;
   // bodyDef.rotation = body_def.
   bodyDef.fixedRotation = true;
-  bodyDef.isBullet = body_def.is_bullet;
+  bodyDef.isBullet = is_bullet;
   bodyDef.linearVelocity = b2Vec2_zero;
-  bodyDef.linearDamping = body_def.linear_damping;
-  bodyDef.angularDamping = body_def.angular_damping;
+  bodyDef.linearDamping = lin_damping;
+  bodyDef.angularDamping = ang_damping;
   bodyDef.userData = (void*)static_cast<uintptr_t>(entt::to_integral(e));
   b2BodyId body_id = b2CreateBody(world_id, &bodyDef);
 
-  b2Body_SetLinearDamping(body_id, 5.0f);
+  b2Circle circle;
+  // circle.center = def.pos_meters;
+  circle.center = b2Vec2{ 0, 0 };
+  circle.radius = 0.5f * size_meters.x;
+  // b2Polygon box = b2MakeBox(0.5f * size_meters.x, 0.5f * size_meters.y);
 
   b2ShapeDef shapeDef = b2DefaultShapeDef();
+  // shapeDef.density =
+  // shapeDef.filter =
+  // shapeDef.userData =
   shapeDef.isSensor = is_sensor;
   shapeDef.enableContactEvents = true;
   shapeDef.enableSensorEvents = true;
-  b2ShapeId shape_id = b2CreatePolygonShape(body_id, &shapeDef, &box);
 
-  TransformComponent t_c;
-  auto pos_2d = meters_to_pixels({ bodyDef.position.x, bodyDef.position.y });
-  // auto size_2d = meters_to_pixels(size_meters);
-  t_c.pos = vec3{ pos_2d.x, pos_2d.y, 0.0f };
-  t_c.size = vec3{ render_size.x, render_size.y, 0.0f };
+  b2ShapeId shape_id = b2CreateCircleShape(body_id, &shapeDef, &circle);
+  // b2ShapeId shape_id = b2CreatePolygonShape(body_id, &shapeDef, &box);
 
-  r.emplace<TransformComponent>(e, t_c);
-  r.emplace<ColourComponent>(e, ColourComponent{ .r = colour.r, .g = colour.g, .b = colour.b });
-  r.emplace<SpriteComponent>(e, data.sprite);
-  r.emplace<LightComponent>(e, LightComponent{ .is_emitter = (float)is_emitter, .is_occluder = (float)is_occluder });
   r.emplace<PhysicsBodyComponent>(e, PhysicsBodyComponent{ .id = body_id, .shape_ids = { shape_id } });
   set_entity_from_body_id(body_id, e);
 
   entt::entity shape_e = r.create();
   r.emplace<PhysicsShapeComponent>(shape_e, PhysicsShapeComponent{ .body_id = body_id, .shape_id = shape_id });
   set_entity_from_shape_id(shape_id, shape_e);
+
+  return e;
+};
+
+void
+attach_sprite(entt::registry& r, entt::entity e, const SpriteDef& def)
+{
+  const auto pos = def.pos;
+  const auto size = def.size;
+  const auto col = def.colour;
+  const auto sprite = def.sprite;
+  const auto is_emitter = def.is_emitter;
+  const auto is_occluder = def.is_occluder;
+
+  TransformComponent t_c;
+  t_c.pos = vec3{ pos.x, pos.y, 0.0f };
+  t_c.size = vec3{ size.x, size.y, 0.0f };
+  r.emplace<TransformComponent>(e, t_c);
+  r.emplace<ColourComponent>(e, ColourComponent{ .r = col.r, .g = col.g, .b = col.b });
+  r.emplace<SpriteComponent>(e, sprite);
+  r.emplace<LightComponent>(e, LightComponent{ .is_emitter = (float)is_emitter, .is_occluder = (float)is_occluder });
+};
+
+entt::entity
+spawn_projectile(entt::registry& r, const entt::entity weapon_e, const BulletDef& def, const vec2& pos, const vec2& vel)
+{
+  auto e = r.create();
+
+  SpriteComponent sprite_c = default_spritesheet();
+  attach_sprite(r,
+                e,
+                SpriteDef{
+                  .pos = pos,
+                  .size = { 16.0f, 16.0f },
+                  .sprite = sprite_c,
+                });
+
+  attach_body(r,
+              e,
+              PhysicsBodyDef{
+                .pos_meters = pixels_to_meters({ pos.x, pos.y }),
+                .size_meters = pixels_to_meters({ 16.0f, 16.0f }),
+                .is_bullet = true,
+                .is_sensor = true,
+              });
+
+  // should attach bulletcomponent to the shape
+  r.emplace<BulletComponent>(e, BulletComponent{ .weapon_e = weapon_e });
+
+  // r.emplace<TeamComponent>(bullet_e, bullet_def.team);
+  // r.emplace<SetTransformRotationBasedOnPhysicsVelocity>(bullet_e);
+  // r.emplace<BulletBounce>(bullet_e, BulletBounce{ bullet_def.bounces });
+  // r.emplace<BulletDamage>(bullet_e, bullet_def.damage);
+  // r.emplace<BulletPierce>(bullet_e, bullet_def.pierce);
+  // r.emplace<BulletSize>(bullet_e, bullet_def.size);
+  // r.emplace<BulletSpeed>(bullet_e, bullet_def.speed);
+  // r.emplace<BulletKnockback>(bullet_e, bullet_def.knockback_force);
+  // r.emplace<BulletLifesteal>(bullet_e, bullet_def.lifesteal);
+  // auto cc = bullet_def.crit_chance;
+  // auto cd = bullet_def.crit_damage;
+  // r.emplace<BulletCrit>(bullet_e, BulletCrit{ .crit_chance = cc, .crit_damage = cd });
+  // r.emplace<BulletLifetime>(bullet_e, BulletLifetime{ .seconds = bullet_def.lifecycle / 1000.0f });
+  // r.emplace<EntityTimedLifecycle>(bullet_e, bullet_def.lifecycle);
+
+  const auto body_id = r.get<PhysicsBodyComponent>(e).id;
+  b2Body_SetLinearVelocity(body_id, { vel.x, vel.y });
 
   return e;
 }

@@ -1,5 +1,5 @@
 
-Texture2D<float4> SpriteTextures[2] : register(t0, space2);
+Texture2D<float4> SpriteTextures[12] : register(t0, space2);
 SamplerState SpriteSampler : register(s0, space2);
 
 struct Input
@@ -28,7 +28,7 @@ float4 main(Input input) : SV_Target0
     float2 v_sprite_wh = input.Data1.zw; // e.g. 1, 1
     float4 v_col = input.Data2;
     float2 v_eao = input.Data3.xy;
-    float v_spritesheet_idx = input.Data4.r;
+    int v_spritesheet_idx = input.Data4.r;
 
     uint tex_w, tex_h;
     SpriteTextures[v_spritesheet_idx].GetDimensions(tex_w, tex_h);

@@ -4,9 +4,12 @@
 
 #include "game_and_engine_interop.hpp"
 #include "modules/actors/actor_player/actor_player_components.hpp"
+#include "modules/actors/actor_player/actor_player_helpers.hpp"
 #include "modules/box2d/box2d_components.hpp"
+#include "modules/box2d/box2d_helpers.hpp"
 #include "modules/entt/entt_helpers.hpp"
-#include "modules/input/input_helpers.hpp"
+#include "modules/events/event_coll_player_provider/event_coll_player_provider_helpers.hpp"
+#include "modules/events/events_core/events_system.hpp"
 #include "modules/physics/box2d_parallel.hpp"
 #include "modules/physics/physics_components.hpp"
 #include "modules/physics/physics_system.hpp"
@@ -16,8 +19,11 @@
 #include "systems/system_anims/anims_components.hpp"
 #include "systems/system_anims/anims_helpers.hpp"
 #include "systems/system_anims/anims_system.hpp"
+#include "systems/system_input/input_components.hpp"
+#include "systems/system_input/input_helpers.hpp"
 #include "systems/system_input/input_system.hpp"
-#include "systems/system_items/items_components.hpp"
+#include "systems/system_shoot/shoot_components.hpp"
+#include "systems/system_shoot/shoot_system.hpp"
 #include "systems/ui_system_gameover/ui_gameover_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_system.hpp"
 
@@ -26,14 +32,15 @@ namespace game2d {
 using namespace std::literals;
 
 static entt::registry internal_r;
-static bool refreshed = false;
+// static bool refreshed = false;
 static bool capture_mouse = false;
 static float camera_speed = 500.0f;
 static float mouse_sens = 0.01f;
 static float stuff_size = 32.0f;
 const auto jump_force = b2Vec2{ 0.0f, -5.0f };
 const auto move_force = 0.15f;
-const auto move_damping = 10.0f;
+const auto linear_damping = 5.0f;  // normally between 0 and 1
+const auto angular_damping = 1.0f; // normally between 0 and 1
 
 // Physics
 static b2Vec2 gravity = { 0.0f, 0.0f };
@@ -44,6 +51,177 @@ const auto get_system_time_for_seed = []() -> uint64_t {
   return seed;
 };
 
+entt::entity
+spawn_character(const GameData* data,
+                entt::registry& r,
+                const vec2 pos,
+                const int spritesheet_choice,
+                const bool is_emitter = false)
+{
+  const auto e = r.create();
+  r.emplace<InventoryComponent>(e, InventoryComponent{ .items = 0 });
+  r.emplace<SpriteAnimationState>(e);
+  r.emplace<SpriteDirComponent>(e);
+
+  const auto player_body_def = PhysicsBodyDef{
+    .pos_meters = pixels_to_meters({ pos.x, pos.y }),
+    .size_meters = pixels_to_meters({ stuff_size, stuff_size }),
+    .linear_damping = linear_damping,
+    .angular_damping = angular_damping,
+  };
+  attach_body(r, e, player_body_def);
+
+  const bool use_spritelayers = false;
+  const bool use_premade_sprite = true;
+
+  if (use_spritelayers) {
+    r.emplace<TransformComponent>(e,
+                                  TransformComponent{
+                                    .pos = { pos.x, pos.y },
+                                    .size = { 64.0f, 64.0f },
+                                  });
+
+    attach_spritelayers(r, e, data);
+  }
+
+  if (use_premade_sprite) {
+    // just use a premade character
+    SpriteComponent sprite_c = default_character_spritesheet();
+
+    // todo: improve
+    sprite_c.spritesheet_idx = data->n_preused_textures + spritesheet_choice;
+
+    attach_sprite(r,
+                  e,
+                  SpriteDef{
+                    .pos = { 500.0f, 450.0f },
+                    .size = { 64.0f, 64.0f },
+                    .sprite = sprite_c,
+                    .is_emitter = is_emitter,
+                  });
+  }
+
+  return e;
+};
+
+void
+game_init_only_game_state(const GameData* data, entt::registry& r)
+{
+  // create physics world
+  const auto worldId = emplace_or_replace_physics_world();
+  SINGLE_Physics::get().worldId = worldId;
+  SDL_Log("Created physics world.");
+
+  uint64_t seed = 0;
+#if defined(_DEBUG)
+  seed = get_system_time_for_seed();
+#endif
+  static RandomState rnd(seed);
+
+  // for (int i = 0; i < 100; i++) {
+  //   const auto rnd_x = random(rnd, 550.0f, 900.0f);
+  //   const auto rnd_y = random(rnd, 0.0f, 720.0f);
+
+  //   {
+  //     const auto consumer_e = r.create();
+  //     const auto body_def = PhysicsBodyDef{
+  //       .pos_meters = pixels_to_meters({ rnd_x, rnd_y }),
+  //       .size_meters = pixels_to_meters({ stuff_size, stuff_size }),
+  //     };
+  //     attach_body(r, consumer_e, body_def);
+
+  //     const auto sprite_def = SpriteDef{
+  //       .pos = { rnd_x, rnd_y },
+  //       .size = { stuff_size, stuff_size },
+  //       .is_emitter = false,
+  //       .is_occluder = true,
+  //     };
+  //     attach_sprite(r, consumer_e, sprite_def);
+
+  //     r.emplace<ContainerReceiverComponent>(consumer_e);
+  //     r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
+  //   }
+  // }
+
+  // {
+  //   const auto provider_e = r.create();
+  //   const auto rnd_0_x = random(rnd, 100.0f, 450.0f);
+  //   attach_body(r,
+  //               provider_e,
+  //               PhysicsBodyDef{
+  //                 .pos_meters = pixels_to_meters({ rnd_0_x, 300 }),
+  //                 .size_meters = pixels_to_meters({ stuff_size, stuff_size }),
+  //               });
+  //   attach_sprite(r,
+  //                 provider_e,
+  //                 SpriteDef{
+  //                   .pos = { rnd_0_x, 300 },
+  //                   .size = { stuff_size, stuff_size },
+  //                   .colour = { 1.0f, 0.0f, 0.0f },
+  //                   .is_emitter = false,
+  //                   .is_occluder = true,
+  //                 });
+  //   r.emplace<ContainerProviderComponent>(provider_e);
+  //   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
+  // }
+
+  // Init player
+  const auto player_e = spawn_character(data, r, { 450.0f, 500.0f }, 0, true);
+  r.emplace<PlayerComponent>(player_e);
+  r.emplace<InputComponent>(player_e);
+
+  // Give player a weapon
+  auto weapon_e = r.create();
+  SpriteComponent sprite_c = default_spritesheet();
+  attach_sprite(r, weapon_e, SpriteDef{ .pos = { 450.0f, 500.0f }, .size = { 32.0f, 32.0f }, .sprite = sprite_c });
+  r.emplace<WeaponComponent>(weapon_e, WeaponComponent{ .parent_e = player_e });
+  r.emplace<WeaponFireRate>(weapon_e);
+  r.emplace<WeaponReloadRate>(weapon_e);
+  r.emplace<WeaponProjectiles>(weapon_e);
+  r.emplace<WeaponMagazine>(weapon_e);
+  // r.emplace<WeaponRange>(weapon_e);
+
+  for (int i = 0; i < 6; i++) {
+    const auto rnd_x = random(rnd, 100.0f, 900.0f);
+    const auto rnd_y = random(rnd, 100.0f, 720.0f);
+    const auto char1 = spawn_character(data, r, { rnd_x, rnd_y }, 1);
+  }
+
+  for (int i = 0; i < 1; i++) {
+    const auto rnd_x = random(rnd, 100.0f, 900.0f);
+    const auto rnd_y = random(rnd, 100.0f, 720.0f);
+    const auto char_e = spawn_character(data, r, { rnd_x, rnd_y }, 2);
+    r.emplace<RedWizardComponent>(char_e);
+  }
+
+  // lights
+  for (int i = 0; i < 6; i++) {
+    const auto rnd_x = random(rnd, 550.0f, 900.0f);
+    const auto rnd_y = random(rnd, 0.0f, 720.0f);
+
+    const auto light_e = r.create();
+
+    attach_body(r,
+                light_e,
+                PhysicsBodyDef{
+                  .pos_meters = pixels_to_meters({ rnd_x, rnd_y }),
+                  .size_meters = pixels_to_meters({ stuff_size, stuff_size }),
+                  .linear_damping = linear_damping,
+                  .angular_damping = angular_damping,
+                });
+
+    attach_sprite(r,
+                  light_e,
+                  SpriteDef{
+                    .pos = { rnd_x, rnd_y },
+                    .size = { stuff_size, stuff_size },
+                    .sprite = default_spritesheet(),
+                    .is_emitter = true,
+                    .is_occluder = false,
+                  });
+  }
+}
+
 void
 game_init(GameData* data)
 {
@@ -53,98 +231,55 @@ game_init(GameData* data)
   data->r = &internal_r;
   auto& r = internal_r;
 
-  auto& camera_pos = data->camera_pos;
+  // auto& camera_pos = data->camera_pos;
   // camera_pos = { -7.5, 3.2, -4.45 };
 
   const auto view = r.view<const TransformComponent, const ColourComponent, const SpriteComponent>();
   SDL_Log("renderables: %zu", view.size_hint());
 
-  // create physics world
-  const auto worldId = emplace_or_replace_physics_world();
-  SINGLE_Physics::get().worldId = worldId;
-  SDL_Log("Created physics world.");
+  // Load game textures...
+  {
+    // premade character spritesheets...
+    const std::string spr_path = "packs/PUNY_CHARACTERS_v2_1/Pre-Made Character Spritesheets/";
+    const std::vector<std::string> premade_character_sheets = {
+      spr_path + "Basic Assasin/Assasin-Black.png"s,
+      // spr_path + "Basic Assasin/Assasin-Green.png"s,
+      // spr_path + "Basic Assasin/Assasin-Red.png"s,
+      // spr_path + "Basic Assasin/Thief-Green.png"s,
 
-  // Load a texture.
-  SDL_Log("Loading texture...");
-  // const auto char_tex_path = "packs/PUNY_CHARACTERS_v2_1/Pre-Made Character Spritesheets/Basic Melee/Novice.png"s;
-  const auto char_tex_path = "packs/PUNY_CHARACTERS_v2_1/premade.png"s;
-  const auto char_tex = create_and_upload_gpu_texture(data->device, char_tex_path);
-  data->unprocessed_textures.push_back(char_tex.texture);
-  SDL_Log("(gamethread) Loaded %zu textures.", data->unprocessed_textures.size());
+      spr_path + "Basic Mage/High-Mage-Cyan.png"s,
+      spr_path + "Basic Mage/High-Mage-Red.png"s,
+      // spr_path + "Basic Mage/Mage-Cyan.png"s,
 
-  // rnd_x on left side of screen.
-  uint64_t seed = 0;
-#if defined(_DEBUG)
-  seed = get_system_time_for_seed();
-#endif
-  static RandomState rnd(seed);
-  const auto rnd_0_x = random(rnd, 100.0f, 450.0f);
+      // spr_path + "Basic Melee/Grunt.png"s,
+      // spr_path + "Basic Melee/Novice.png"s,
+      // spr_path + "Basic Melee/Knight.png"s,
+      // spr_path + "Basic Melee/Paladin.png"s,
+      // spr_path + "Basic Melee/Soldier-Iron-Red.png"s,
+      // spr_path + "Basic Melee/Soldier-Iron-Blue.png"s,
 
-  for (int i = 0; i < 100; i++) {
-    const auto rnd_x = random(rnd, 550.0f, 900.0f);
-    const auto rnd_y = random(rnd, 0.0f, 720.0f);
-    const auto consumer_e = spawn(r,
-                                  {
-                                    .pos = { rnd_x, rnd_y },
-                                    .render_size = { stuff_size, stuff_size },
-                                    .coll_size = { stuff_size, stuff_size },
-                                    .is_occluder = true,
-                                  });
-    r.emplace<ContainerReceiverComponent>(consumer_e);
-    r.emplace<InventoryComponent>(consumer_e, InventoryComponent{ .items = 0 });
+      // spr_path + "Basic Ranged/Archer-Green.png"s,
+      // spr_path + "Basic Ranged/Rogue-Green.png"s,
+
+      // spr_path + "Orcs/Goblin-Thief.png"s,
+      // spr_path + "Orcs/Goblin-Warrior.png"s,
+      // spr_path + "Orcs/Goblin-Worker.png"s,
+      // spr_path + "Orcs/Orc-Brute.png"s,
+      // spr_path + "Orcs/Orc-Worker.png"s,
+    };
+    for (const auto& char_tex_path : premade_character_sheets) {
+      const auto char_tex = create_and_upload_gpu_texture(data->device, char_tex_path);
+      data->unprocessed_textures.push_back(char_tex.texture);
+    }
+    SDL_Log("Using %zu premade character sheets", data->unprocessed_textures.size());
+
+    load_spritelayer_textures(r, data);
+    SDL_Log("(gamethread) Loaded %zu textures.", data->unprocessed_textures.size());
   }
 
-  // const auto provider_e = spawn(r,
-  //                               {
-  //                                 .pos = { rnd_0_x, 300 },
-  //                                 .size = { stuff_size, stuff_size },
-  //                                 .colour = { 1.0f, 0.0f, 0.0f },
-  //                                 .is_emitter = true,
-  //                               });
-  // r.emplace<ContainerProviderComponent>(provider_e);
-  // r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
+  game_init_only_game_state(data, r);
 
-  const auto player_body_def = PhysicsBodyDef{
-    .linear_damping = move_damping,
-  };
-  const auto player_e = spawn(r,
-                              SpawnConfig{ .pos = { 500.0f, 450.0f },
-                                           .render_size = { 64.0f, 64.0f },
-                                           .coll_size = { 32.0f, 32.0f },
-                                           .body_def = player_body_def,
-                                           .colour = { 1.0f, 1.0f, 1.0f },
-                                           .sprite = default_character_spritesheet(),
-                                           .is_emitter = true });
-  r.emplace<PlayerComponent>(player_e);
-  r.emplace<InventoryComponent>(player_e, InventoryComponent{ .items = 0 });
-  r.emplace<SpriteAnimationState>(player_e);
-  r.emplace<SpriteDirComponent>(player_e);
-
-  for (int i = 0; i < 6; i++) {
-    const auto rnd_x = random(rnd, 550.0f, 900.0f);
-    const auto rnd_y = random(rnd, 0.0f, 720.0f);
-    const auto light_e = spawn(r,
-                               { .pos = { rnd_x, rnd_y },
-                                 .render_size = { stuff_size, stuff_size },
-                                 .coll_size = { stuff_size, stuff_size },
-                                 .colour = { 1.0f, 0.0f, 0.0f, 1.0f },
-                                 .sprite = default_spritesheet(),
-                                 .is_emitter = true });
-  }
-
-  // spawn(r,
-  //       { .pos = { 0.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
-  //       });
-  // spawn(r,
-  //       { .pos = { 0.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
-  //       });
-  // spawn(
-  //   r, { .pos = { 1280.0f, 0.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
-  //   });
-  // spawn(
-  //   r,
-  //   { .pos = { 1280.0f, 720.0f }, .size = { stuff_size, stuff_size }, .colour = { 1.0f, 1, 0, 1.0f }, .is_emitter = true
-  //   });
+  init_events_system(r);
 
   SDL_Log("game_init() - done");
 };
@@ -154,23 +289,17 @@ game_fixed_update(GameData* data)
 {
   auto& r = internal_r;
 
-  const auto& inputs_c = SINGLE_FrameInput::get();
-
-  const auto player_input = inputs_c.keyboard_l + inputs_c.controller_l;
-
   // Apply force to first dynamic body
   {
-    auto view = r.view<const PhysicsBodyComponent, const TransformComponent, const PlayerComponent>();
-    for (const auto& [e, pb_c, t_c, player_c] : view.each()) {
+    auto view = r.view<const PhysicsBodyComponent, const TransformComponent, const PlayerComponent, const InputComponent>();
+    for (const auto& [e, pb_c, t_c, player_c, input_c] : view.each()) {
       const b2BodyType type = b2Body_GetType(pb_c.id);
       if (type == b2_staticBody)
         continue;
 
-      // const auto meters_per_second = 0.1f;
-      const auto force = move_force * b2Vec2{ player_input.x, player_input.y };
+      const auto input = vec2{ input_c.lx, input_c.ly };
+      const auto force = move_force * b2Vec2{ input.x, input.y };
       b2Body_ApplyLinearImpulseToCenter(pb_c.id, force, true);
-
-      break;
     }
   }
 
@@ -216,32 +345,45 @@ game_update(GameData* data)
   auto dt = data->dt;
 
   update_input_system(r, data);
-  const auto& frame_inputs_c = SINGLE_FrameInput::get();
 
   auto& ui_data = data->ui_data;
   // ui_data.n_controllers = n_joysticks;
   ui_data.n_controllers = 0;
-  ui_data.keyboard_l = frame_inputs_c.keyboard_l;
-  ui_data.keyboard_r = frame_inputs_c.keyboard_r;
-  ui_data.controller_l = frame_inputs_c.controller_l;
-  ui_data.controller_r = frame_inputs_c.controller_r;
+
+  ui_data.debug_inputs.clear();
+  for (const auto& [e, input_c] : r.view<InputComponent>().each()) {
+    ui_data.debug_inputs.push_back({ input_c.lx, input_c.ly });
+    ui_data.debug_inputs.push_back({ input_c.rx, input_c.ry });
+  }
 
   // convert input <=> sprite
   const auto player_e = get_first<PlayerComponent>(r);
   if (player_e != entt::null) {
     auto& player_sprite_c = r.get<SpriteDirComponent>(player_e);
-
-    auto dir = vec_to_dir(ui_data.keyboard_l.x, ui_data.keyboard_l.y, player_sprite_c.dir);
+    const auto& player_input_c = r.get<InputComponent>(player_e);
+    const auto dir = vec_to_dir(player_input_c.lx, player_input_c.ly, player_sprite_c.dir);
     player_sprite_c.dir = dir;
-
-    // vel can impact animations
-    auto body_id = r.get<PhysicsBodyComponent>(player_e).id;
-    auto body_vel = b2Body_GetLinearVelocity(body_id);
-    player_sprite_c.vel = { body_vel.x, body_vel.y };
   }
 
   // systems.
+
+  // sprites to follow parent
+  {
+    const auto view = r.view<const SpriteFollowParentComponent, TransformComponent>();
+    float i = 0;
+    for (const auto& [e, sprite_c, t_c] : view.each()) {
+
+      const auto& par_c = r.get<TransformComponent>(sprite_c.parent_e);
+      const auto pos_in_pixels = vec2{ par_c.pos.x, par_c.pos.y };
+      const auto size_in_pixels = vec2{ par_c.size.x, par_c.size.y };
+
+      const vec2 pos_tl = pos_in_pixels;
+      t_c.pos = vec3{ pos_tl.x + i * 16, pos_tl.y, 0 };
+    }
+  }
+
   update_animator_system(r, dt);
+  update_shoot_system(r, dt);
 
   // process ui data.
   const auto view = r.view<const Request_GameOver>();
@@ -249,19 +391,25 @@ game_update(GameData* data)
   if (data->ui_data.play_again && gameover) {
     SDL_Log("(gamethread) ui clicked to play again");
     r.destroy(view.begin(), view.end());
+
     game_refresh(data);
-    game_init(data);
+    game_init_only_game_state(data, r);
   }
 
   // populate game's copy of ui data from the gamethread
   {
     auto& ui_data = data->ui_data;
+
     auto& hmm = ui_data.hmm;
     hmm.clear(); // .clear() is bad
+
     //   // const auto view = r.view<const TransformComponent, const ColourComponent, const InventoryComponent>();
     //   // for (const auto& [e, t_c, col_c, inv_c] : view.each())
     //   //   hmm.push_back(UIEntity{ .entity = e, .renderable = { .transform = t_c, .colour = col_c }, .inventory = inv_c
-    //   }); ui_data.play_again = false; ui_data.game_over = gameover;
+    //   });
+
+    ui_data.play_again = false;
+    ui_data.game_over = gameover;
   }
 };
 
@@ -299,16 +447,13 @@ game_update_ui(GameUIData* ui_data)
     flags |= ImGuiWindowFlags_AlwaysAutoResize;
     ImGui::Begin("SomeOtherWindow", nullptr, flags);
 
-    ImGui::Text("Keyboard");
-    ImGui::Text("%0.2f %0.2f %0.2f %0.2f", data.keyboard_l.x, data.keyboard_l.y, data.keyboard_r.x, data.keyboard_r.y);
+    ImGui::Text("Inputs");
 
     ImGui::Text("Controllers");
-    ImGui::Text("%i %f %f %f %f",
-                data.n_controllers,
-                data.controller_l.x,
-                data.controller_l.y,
-                data.controller_r.x,
-                data.controller_r.y);
+    ImGui::Text("%i", data.n_controllers);
+
+    for (const auto& input : data.debug_inputs)
+      ImGui::Text("%0.2f %0.2f", input.x, input.y);
 
     const auto& input_c = SINGLE_Inputs::get();
     ImGui::Text("%zu down, %zu up, %zu held", input_c.keys_down.size(), input_c.keys_up.size(), input_c.keys_held.size());
@@ -363,10 +508,10 @@ void
 game_refresh(GameData* data)
 {
   SDL_Log("(Game) game_refresh()");
-  refreshed = true;
+  // refreshed = true;
 
   // clear the registry
-  // internal_r.clear();
+  internal_r.clear();
 };
 
 void

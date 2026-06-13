@@ -60,15 +60,16 @@ handle_on_coll_enter__check_for_gameover(entt::registry& r, const OnCollisionEnt
 {
   const auto parent_a_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_a).body_id);
   const auto parent_b_e = get_entity_from_body_id(r.get<const PhysicsShapeComponent>(evt.shape_b).body_id);
-  const auto [shape_a, shape_b] = coll<const PlayerComponent, const ContainerReceiverComponent>(r, parent_a_e, parent_b_e);
+  const auto [shape_a, shape_b] = coll<const PlayerComponent, const RedWizardComponent>(r, parent_a_e, parent_b_e);
 
   if (shape_a == entt::null || shape_b == entt::null)
     return; // not a coll of interest
 
-  const auto& consumer_inv = r.get<const InventoryComponent>(parent_b_e);
-  SDL_Log("consumer has: %i items", consumer_inv.items);
+  const auto& consumer_inv = r.get<const RedWizardComponent>(parent_b_e);
+  // SDL_Log("consumer has: %i items", consumer_inv.items);
+  // const bool gameover = consumer_inv.items >= 5;
+  const bool gameover = true;
 
-  const bool gameover = consumer_inv.items >= 5;
   if (gameover) {
     SDL_Log("dingding! gameover");
     create_empty<Request_GameOver>(r);

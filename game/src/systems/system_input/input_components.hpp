@@ -1,23 +1,17 @@
 #pragma once
 
-#include "game_and_engine_interop.hpp"
-
-#include "singleton.hpp"
-
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_scancode.h>
 
 namespace game2d {
 
-struct SINGLE_FrameInput : public Singleton<SINGLE_FrameInput>
+struct InputComponent
 {
-  bool jump = false;
-  bool pickup = false;
-  bool request_gameover = false;
-  vec2 keyboard_r = { 0.0f, 0.0f };
-  vec2 keyboard_l = { 0.0f, 0.0f };
-  vec2 controller_l = { 0.0f, 0.0f };
-  vec2 controller_r = { 0.0f, 0.0f };
+  float lx = 0.0f;
+  float ly = 0.0f;
+  float rx = 0.0f;
+  float ry = 0.0f;
+  bool shoot_down = false;
 };
 
 // Anything that gets put in this component
@@ -67,14 +61,7 @@ struct ControllerComponent
   // SDL_GameControllerButton c_r_bumper = SDL_GameControllerButton::SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
 };
 
-struct InputComponent
-{
-  float lx = 0.0f;
-  float ly = 0.0f;
-  float rx = 0.0f;
-  float ry = 0.0f;
-  bool shoot = false;
-};
+
 
 // pressing WASD directly correlates to some axis
 struct MovementDirectComponent

@@ -105,10 +105,7 @@ struct CommonUiData
   float game_dt = 0.0f;
   int n_controllers = 0;
 
-  vec2 keyboard_l{ 0.0f, 0.0f };
-  vec2 keyboard_r{ 0.0f, 0.0f };
-  vec2 controller_l{ 0.0f, 0.0f };
-  vec2 controller_r{ 0.0f, 0.0f };
+  std::vector<vec2> debug_inputs;
 
   int n_contact_events = 0;
   int n_sensor_events = 0;
@@ -140,6 +137,7 @@ struct GameData
 
   CommonUiData ui_data;
 
+  int n_preused_textures = 1; // custom texture
   std::vector<SDL_GPUTexture*> unprocessed_textures;
 };
 
