@@ -88,6 +88,7 @@ update_shoot_system(entt::registry& r, float dt)
     // do the shoot event
     ShootEvent shoot_evt;
     shoot_evt.weapon_e = e;
+    shoot_evt.dir = aim_dir;
     auto& evts_c = SINGLE_Events::get();
     evts_c.dispatcher.trigger(shoot_evt);
     evts_c.dispatcher.update();

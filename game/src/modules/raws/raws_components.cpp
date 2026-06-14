@@ -97,7 +97,12 @@ attach_sprite(entt::registry& r, entt::entity e, const SpriteDef& def)
 };
 
 entt::entity
-spawn_projectile(entt::registry& r, const entt::entity weapon_e, const BulletDef& def, const vec2& pos, const vec2& vel)
+spawn_projectile(entt::registry& r,
+                 const entt::entity weapon_e,
+                 const BulletDef& def,
+                 const vec2& pos,
+                 const vec2& size,
+                 const vec2& vel)
 {
   auto e = r.create();
 
@@ -106,7 +111,7 @@ spawn_projectile(entt::registry& r, const entt::entity weapon_e, const BulletDef
                 e,
                 SpriteDef{
                   .pos = pos,
-                  .size = { 16.0f, 16.0f },
+                  .size = size,
                   .sprite = sprite_c,
                 });
 
@@ -114,7 +119,7 @@ spawn_projectile(entt::registry& r, const entt::entity weapon_e, const BulletDef
               e,
               PhysicsBodyDef{
                 .pos_meters = pixels_to_meters({ pos.x, pos.y }),
-                .size_meters = pixels_to_meters({ 16.0f, 16.0f }),
+                .size_meters = pixels_to_meters({ size.x, size.y }),
                 .is_bullet = true,
                 .is_sensor = true,
               });

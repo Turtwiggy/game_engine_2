@@ -56,6 +56,11 @@ attach_sprite(entt::registry& r, entt::entity e, const SpriteDef& def);
 //
 
 entt::entity
-spawn_projectile(entt::registry& r, const entt::entity weapon_e, const BulletDef& def, const vec2& pos, const vec2& vel);
+spawn_projectile(entt::registry& r,
+                 const entt::entity weapon_e,
+                 const BulletDef& def,
+                 const vec2& pos,
+                 const vec2& size,
+                 const vec2& vel);
 
 } // namespace game2d

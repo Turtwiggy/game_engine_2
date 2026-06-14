@@ -1,4 +1,3 @@
-#include "modules/renderer/renderer_helpers.hpp"
 #include "pch.hpp" // IWYU pragma: keep
 
 #include "actor_player_helpers.hpp"
@@ -6,6 +5,7 @@
 #include "actor_player_components.hpp"
 #include "modules/filesystem/filesystem_helpers.hpp"
 #include "modules/raws/raws_components.hpp"
+#include "modules/renderer/renderer_helpers.hpp"
 #include "systems/system_anims/anims_components.hpp"
 
 namespace game2d {

@@ -32,15 +32,15 @@ update_animator_system(entt::registry& r, const float dt)
                                float dt) {
     //
     // hack: choose anim by idx
-    // int idle_anim_idx = 0;
-    // int walk_anim_idx = 1;
-    // int anim_idx = idle_anim_idx;
-    // auto length = glm::length2(glm::vec2{ sprite_dir_c.vel.x, sprite_dir_c.vel.y });
-    // if (length > 1.0f)
-    //   anim_idx = walk_anim_idx;
+    int idle_anim_idx = 0;
+    int walk_anim_idx = 1;
+    int anim_idx = idle_anim_idx;
+    auto length = glm::length2(glm::vec2{ input_c.lx, input_c.ly });
+    if (length > 0.0f)
+      anim_idx = walk_anim_idx;
 
     // hack: loop through the anims.
-    int anim_idx = animation.anim_idx;
+    // int anim_idx = animation.anim_idx;
     // int max_anims = anims.size();
 
     const auto anim = anims[anim_idx];
@@ -50,7 +50,7 @@ update_animator_system(entt::registry& r, const float dt)
     const int n_frames = anim.anim.size();
 
     // hack: x ms per frame
-    animation.duration = (float)n_frames * 0.1f;
+    animation.duration = (float)n_frames * 0.2f;
 
     if (animation.timer >= animation.duration && !animation.looping) {
       // const int i0 = (int)(n_frames - 1);
@@ -79,8 +79,14 @@ update_animator_system(entt::registry& r, const float dt)
     sprite_c.sprite_pos_y = anim_info.second == -1 ? dir : anim_info.second;
   };
 
-  const auto view0 = r.view<SpriteComponent, SpriteDirComponent, SpriteAnimationState, const InputComponent>();
-  for (const auto& [e, sprite_c, sprite_dir_c, animation, input_c] : view0.each()) {
+  const auto view0 = r.view<SpriteComponent, SpriteDirComponent, SpriteAnimationState>();
+  for (const auto& [e, sprite_c, sprite_dir_c, animation] : view0.each()) {
+
+    // [optional] InputComponent
+    InputComponent input_c;
+    if (r.all_of<InputComponent>(e))
+      input_c = r.get<InputComponent>(e);
+
     update_anims(input_c, sprite_c, sprite_dir_c, animation, dt);
   }
 

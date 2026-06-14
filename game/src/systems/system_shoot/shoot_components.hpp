@@ -11,7 +11,7 @@ struct BulletDef
   vec2 size{ 16.0f, 16.0f };
   int damage = 1;
   // int pierce = 0;
-  // float speed = 1.0f;
+  float speed = 1.0f;
   // int lifecycle = 3 * 1000;
   // float knockback_force = 1.0f;
   // int bounced = 0;
@@ -24,8 +24,8 @@ struct WeaponDef
 {
   int projectiles = 1;
   // int spread_deg = 30;
-  float firerate = 0.5f;
-  float reloadrate = 0.5f;
+  float firerate = 10.0f; // shots per second
+  float reloadrate = 0.0f;
   // float range = 0.0f;
   int bullets_max = 5;
 };
@@ -56,7 +56,7 @@ struct WeaponFireRate
 
 struct WeaponReloadRate
 {
-  const float seconds_base_max = 0.5f;
+  float seconds_base_max = 0.5f;
   float seconds_cur = 0.0f;
 };
 
@@ -86,6 +86,7 @@ struct WeaponMagazine
 struct ShootEvent
 {
   entt::entity weapon_e;
+  vec2 dir;
 };
 
 } // namespace game2d

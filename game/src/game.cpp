@@ -10,12 +10,15 @@
 #include "modules/entt/entt_helpers.hpp"
 #include "modules/events/event_coll_player_provider/event_coll_player_provider_helpers.hpp"
 #include "modules/events/events_core/events_system.hpp"
+#include "modules/maths/helpers.hpp"
+#include "modules/maths/vec.hpp"
 #include "modules/physics/box2d_parallel.hpp"
 #include "modules/physics/physics_components.hpp"
 #include "modules/physics/physics_system.hpp"
 #include "modules/physics/render_helpers.hpp"
 #include "modules/raws/raws_components.hpp"
 #include "modules/renderer/renderer_helpers.hpp"
+#include "modules/ui/ui_helpers.hpp"
 #include "systems/system_anims/anims_components.hpp"
 #include "systems/system_anims/anims_helpers.hpp"
 #include "systems/system_anims/anims_system.hpp"
@@ -23,6 +26,7 @@
 #include "systems/system_input/input_helpers.hpp"
 #include "systems/system_input/input_system.hpp"
 #include "systems/system_shoot/shoot_components.hpp"
+#include "systems/system_shoot/shoot_helpers.hpp"
 #include "systems/system_shoot/shoot_system.hpp"
 #include "systems/ui_system_gameover/ui_gameover_components.hpp"
 #include "systems/ui_system_gameover/ui_gameover_system.hpp"
@@ -36,7 +40,8 @@ static entt::registry internal_r;
 static bool capture_mouse = false;
 static float camera_speed = 500.0f;
 static float mouse_sens = 0.01f;
-static float stuff_size = 32.0f;
+static float stuff_size = 1.0 * 32.0f;
+static float player_size = 3.0 * 32.0f;
 const auto jump_force = b2Vec2{ 0.0f, -5.0f };
 const auto move_force = 0.15f;
 const auto linear_damping = 5.0f;  // normally between 0 and 1
@@ -65,7 +70,7 @@ spawn_character(const GameData* data,
 
   const auto player_body_def = PhysicsBodyDef{
     .pos_meters = pixels_to_meters({ pos.x, pos.y }),
-    .size_meters = pixels_to_meters({ stuff_size, stuff_size }),
+    .size_meters = pixels_to_meters({ player_size / 2.0f, player_size / 2.0f }),
     .linear_damping = linear_damping,
     .angular_damping = angular_damping,
   };
@@ -78,7 +83,7 @@ spawn_character(const GameData* data,
     r.emplace<TransformComponent>(e,
                                   TransformComponent{
                                     .pos = { pos.x, pos.y },
-                                    .size = { 64.0f, 64.0f },
+                                    .size = { player_size, player_size },
                                   });
 
     attach_spritelayers(r, e, data);
@@ -95,7 +100,7 @@ spawn_character(const GameData* data,
                   e,
                   SpriteDef{
                     .pos = { 500.0f, 450.0f },
-                    .size = { 64.0f, 64.0f },
+                    .size = { player_size, player_size },
                     .sprite = sprite_c,
                     .is_emitter = is_emitter,
                   });
@@ -165,21 +170,29 @@ game_init_only_game_state(const GameData* data, entt::registry& r)
   //   r.emplace<InventoryComponent>(provider_e, InventoryComponent{ .items = 5 });
   // }
 
+  // Init weapon
+  auto weapon_e = r.create();
+  SpriteComponent sprite_c = default_spritesheet();
+  sprite_c.sprite_pos_x = 1;
+  attach_sprite(r, weapon_e, SpriteDef{ .pos = { 450.0f, 500.0f }, .size = { 16.0f, 16.0f }, .sprite = sprite_c });
+
   // Init player
   const auto player_e = spawn_character(data, r, { 450.0f, 500.0f }, 0, true);
   r.emplace<PlayerComponent>(player_e);
   r.emplace<InputComponent>(player_e);
 
-  // Give player a weapon
-  auto weapon_e = r.create();
-  SpriteComponent sprite_c = default_spritesheet();
-  attach_sprite(r, weapon_e, SpriteDef{ .pos = { 450.0f, 500.0f }, .size = { 32.0f, 32.0f }, .sprite = sprite_c });
-  r.emplace<WeaponComponent>(weapon_e, WeaponComponent{ .parent_e = player_e });
+  // customize weapon...
+  r.emplace<WeaponComponent>(weapon_e,
+                             WeaponComponent{ .parent_e = player_e,
+                                              .bul_def = BulletDef{
+                                                .size = { 8.0f, 8.0f },
+                                              } });
   r.emplace<WeaponFireRate>(weapon_e);
   r.emplace<WeaponReloadRate>(weapon_e);
   r.emplace<WeaponProjectiles>(weapon_e);
   r.emplace<WeaponMagazine>(weapon_e);
   // r.emplace<WeaponRange>(weapon_e);
+  set_weapon_components_from_weapon_def(r, weapon_e);
 
   for (int i = 0; i < 6; i++) {
     const auto rnd_x = random(rnd, 100.0f, 900.0f);
@@ -210,12 +223,13 @@ game_init_only_game_state(const GameData* data, entt::registry& r)
                   .angular_damping = angular_damping,
                 });
 
+    const auto light_spr = default_spritesheet(1, 0);
     attach_sprite(r,
                   light_e,
                   SpriteDef{
                     .pos = { rnd_x, rnd_y },
                     .size = { stuff_size, stuff_size },
-                    .sprite = default_spritesheet(),
+                    .sprite = light_spr,
                     .is_emitter = true,
                     .is_occluder = false,
                   });
@@ -418,19 +432,15 @@ game_update_ui(GameUIData* ui_data)
 {
   ImGui::SetCurrentContext(ui_data->ctx);
   const auto& data = ui_data->ui_data;
+  const float dt = ImGui::GetIO().DeltaTime;
 
   {
     auto flags = 0;
     flags |= ImGuiWindowFlags_NoDecoration;
     flags |= ImGuiWindowFlags_AlwaysAutoResize;
     ImGui::Begin("SomeOtherCrazyWindow", nullptr, flags);
-
-    if (data.game_dt != 0.0f)
-      ImGui::Text("(GameThread) FPS: %f", 1.0f / data.game_dt);
-    else
-      ImGui::Text("(GameThread) FPS: dt not set?");
-
-    ImGui::Text("(RenderThread) FPS: %0.2f", ImGui::GetIO().Framerate);
+    ImGui::Text("(GameThread) FPS: %f", 1.0f / data.game_dt);
+    ImGui::Text("(RenderThread) FPS: %0.2f", dt);
     ImGui::Text("contact events: %i", data.n_contact_events);
     ImGui::Text("sensor events: %i", data.n_sensor_events);
     ImGui::Text("renderables: %i", (int)ui_data->renderable.size());
@@ -467,6 +477,69 @@ game_update_ui(GameUIData* ui_data)
 
   // systems
   update_ui_gameover_system(ui_data->ui_data);
+
+  // update ui narration system
+  {
+    // note: the ui designed at 1920x1080
+    const float screen_root_w = 1920;
+    const float screen_root_h = 1080;
+    const float screen_cur_x = 1600;
+    const float screen_cur_y = 900;
+    const vec2 screen_root = { screen_root_w, screen_root_h };
+    const float screen_ratio_x = screen_cur_x / screen_root_w;
+    const float screen_ratio_y = screen_cur_y / screen_root_h;
+    const vec2 screen_ratio = { screen_ratio_x, screen_ratio_y };
+
+    auto flags = 0;
+    flags |= ImGuiWindowFlags_NoDecoration;
+    flags |= ImGuiWindowFlags_AlwaysAutoResize;
+    static bool closed = false;
+
+    if (!closed) {
+      vec2 narration_box_wh = { 684.0f + 286.0f, 276.0f };
+      vec2 narration_box_pos = pivot(screen_root, ScreenAnchor::BOTTOM_LEFT, vec2{ 432, 102.0f + narration_box_wh.y });
+      narration_box_wh = narration_box_wh * screen_ratio;
+      narration_box_pos = narration_box_pos * screen_ratio;
+
+      ImGui::SetNextWindowPos({ narration_box_pos.x, narration_box_pos.y }, ImGuiCond_Always);
+      ImGui::SetNextWindowSize({ narration_box_wh.x, narration_box_wh.y }, ImGuiCond_Always);
+      ImGui::Begin("NarrationSystem", &closed, flags);
+
+      // Should be loaded from .txt file
+      std::vector<std::string> sentences{
+        "Something shifts in the deep. The water around the island darkens. The hearthstone's pulse quickens. A warning.",
+        "Sentence B",
+        "Sentence C",
+      };
+
+      static int sentence_idx = 0;
+      static float timer = 0.0f;
+      const auto text_speed = 20.0f;
+
+      const auto text = sentences[sentence_idx];
+      const auto total_chars = (int)text.length();
+      const auto total_time = total_chars / text_speed;
+      timer += dt;
+      // timer = wrap(timer, 0.0f, total_time);
+      timer = glm::clamp(timer, 0.0f, total_time);
+      const int chars_to_show = static_cast<int>((timer / total_time) * total_chars);
+      const auto text_to_display = std::string(text).substr(0, chars_to_show);
+      ImGui::Text("%0.2f/%0.2f", timer, total_time);
+      ImGui::TextWrapped("%s", text_to_display.c_str());
+
+      if (ImGui::Button("Reset"))
+        timer = 0.0f;
+      if (ImGui::Button("Next")) {
+        timer = 0.0f;
+        sentence_idx++;
+        sentence_idx %= sentences.size();
+      }
+      if (ImGui::Button("Close"))
+        closed = true;
+
+      ImGui::End();
+    }
+  }
 
   // Worldspace overlay.
   /*
